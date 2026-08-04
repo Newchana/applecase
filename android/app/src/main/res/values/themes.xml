@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 使用 AppCompat 主题,与 AppCompatActivity 对齐 -->
+    <style name="Theme.AppGateway" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">#34C759</item>
+        <item name="colorPrimaryDark">#28A745</item>
+        <item name="colorAccent">#34C759</item>
+    </style>
+</resources>

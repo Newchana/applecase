@@ -1,0 +1,30 @@
+# IDE / 编辑器
+.idea/
+*.iml
+.vscode/
+
+# ZCode 内部文件(会话/计划,不属于项目)
+.zcode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Android(子目录的 .gitignore 也覆盖,这里根级再保险)
+**/build/
+**/.gradle/
+**/local.properties
+**/captures/
+**/.cxx/
+**/.externalNativeBuild/
+
+# APK / 产物
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# iOS(以后用)
+ios/Pods/
+ios/*.xcuserstate
+ios/xcuserdata/

@@ -1,0 +1,63 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.applecase.gateway'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.applecase.gateway"
+        // Q968 是 Android 13 (API 33),最低支持设 29 充分使用 CallScreeningService
+        minSdk 29
+        targetSdk 33  // 对齐设备,避免 targetSdk 34 引入的前台服务类型强制要求
+        versionCode 1
+        versionName "0.1.0"
+
+        // deviceId 默认值,可在运行时覆盖。构建时可通过 -PdeviceId=xxx 注入
+        buildConfigField "String", "DEFAULT_DEVICE_ID", "\"Q968-default\""
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+            // 调试期 token 用开发密钥,生产用 release 覆盖
+            buildConfigField "String", "PRESHARED_KEY", "\"dev-secret-change-me\""
+        }
+        release {
+            minifyEnabled false
+            buildConfigField "String", "PRESHARED_KEY", "\"replace-in-release\""
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+}
+
+dependencies {
+    // MQTT 客户端:Eclipse Paho(纯 Java,专为嵌入式/Android,依赖轻,无 Netty/Kotlin)
+    implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
+
+    // JSON(用 Android 内置 org.json 即可,不额外引入依赖)
+
+    // AndroidX 前台服务
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.1.0'
+}
+
+// 强制统一 Kotlin 版本,避免 AndroidX 拉入的旧 kotlin-stdlib-jdk7/jdk8 与 AGP 内置的冲突
+configurations.all {
+    resolutionStrategy {
+        force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
+        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
+        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
+    }
+}
