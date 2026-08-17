@@ -686,7 +686,7 @@ function playFrame(ab){
   const buf=actx.createBuffer(1,n,16000);
   const ch=buf.getChannelData(0);
   for(let i=0;i<n;i++)ch[i]=dv.getInt16(8+i*2,true)/32768;
-  if(playNext<actx.currentTime+0.05)playNext=actx.currentTime+0.05;
+  if(playNext<actx.currentTime+0.035)playNext=actx.currentTime+0.035;
   const src=actx.createBufferSource();
   src.buffer=buf;src.connect(actx.destination);
   src.start(playNext);playNext+=buf.duration;
