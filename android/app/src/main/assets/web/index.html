@@ -659,13 +659,19 @@ function startMic(){
   };
 }
 function sendFrame(samples){
+  // 上行增益:INCALL_MUSIC 混入路径电平偏低(实测环回约为下行 1/5),×5 + 软限幅
+  const GAIN=5;
   const buf=new Uint8Array(8+samples.length*2);
+  {const g=new Int16Array(buf.buffer,8);
+   for(let i=0;i<samples.length;i++){
+     let v=samples[i]*GAIN;
+     if(v>32767||v<-32768)v=32767*Math.tanh(v/32767);  // 软限幅防爆音
+     g[i]=Math.max(-32768,Math.min(32767,Math.round(v)))}}
   buf[0]=0x12;
   const s=upSeq++&0xFFFFFF;
   buf[1]=(s>>16)&255;buf[2]=(s>>8)&255;buf[3]=s&255;
   const ts=Date.now()&0x7FFFFFFF;
   buf[4]=(ts>>>24)&255;buf[5]=(ts>>>16)&255;buf[6]=(ts>>>8)&255;buf[7]=ts&255;
-  new Int16Array(buf.buffer,8).set(samples);
   audioWs.send(buf);
   window.__astat.sent++;
 }
