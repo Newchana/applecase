@@ -29,3 +29,4 @@ ios/Pods/
 ios/*.xcuserstate
 ios/xcuserdata/
 magisk.db/
+scripts/out.wav
