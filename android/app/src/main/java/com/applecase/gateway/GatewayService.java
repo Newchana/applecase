@@ -23,6 +23,7 @@ import com.applecase.gateway.call.CallMonitor;
 import com.applecase.gateway.net.MqttClient;
 import com.applecase.gateway.net.Protocol;
 import com.applecase.gateway.net.WebMqttClient;
+import com.applecase.gateway.web.WebHub;
 import com.applecase.gateway.web.WebServer;
 import com.applecase.gateway.sim.SimMonitor;
 import com.applecase.gateway.sms.SmsReceiver;
@@ -60,7 +61,9 @@ public class GatewayService extends Service {
     private CallMonitor callMonitor;
     private CallController callController;
     private Config config;
-    private WebServer webServer;
+    private WebHub webHub;
+    private WebServer webHttp;
+    private WebServer webHttps;
     private String deviceId;
 
     // 动态注册的 receivers(需在 onDestroy 反注册)
@@ -80,16 +83,28 @@ public class GatewayService extends Service {
 
         this.deviceId = deviceId;
 
-        // Web 服务(阶段四):浏览器直接访问 http://<本机IP>:8080,不依赖 broker
-        webServer = new WebServer(this, this::handleWebCommand);
-        webServer.setAudioSink(frame -> voiceBridge.feedUplink(frame));
-        try { webServer.start(); } catch (Exception e) {
-            Log.w(TAG, "web server start failed: " + e.getMessage());
+        // Web 服务(阶段四):浏览器直接访问,不依赖 broker
+        // - HTTP  :8080(短信/电话控制、下行收听)
+        // - HTTPS :8443(自签;麦克风要求安全上下文,语音对讲走这里)
+        webHub = new WebHub();
+        webHub.setCommandSink(this::handleWebCommand);
+        webHub.setAudioSink(frame -> voiceBridge.feedUplink(frame));
+        webHttp = new WebServer(this, webHub, WebServer.HTTP_PORT, false);
+        try { webHttp.start(); } catch (Exception e) {
+            Log.w(TAG, "web http start failed: " + e.getMessage());
+        }
+        webHttps = new WebServer(this, webHub, WebServer.HTTPS_PORT, true);
+        try {
+            webHttps.enableSecure();
+            webHttps.start();
+            Log.i(TAG, "web https :8443 ready");
+        } catch (Exception e) {
+            Log.w(TAG, "web https unavailable: " + e.getMessage());
         }
 
         // MQTT + 事件扇出:所有事件(短信/来电/SIM/ACK)同步广播给 Web 客户端
         mqtt = new WebMqttClient(deviceId, config.brokerHost(), config.brokerPort(),
-                config.mqttUser(), config.mqttPass(), webServer::broadcast);
+                config.mqttUser(), config.mqttPass(), webHub::broadcast);
         smsSender = new SmsSender(this, mqtt);
         voiceBridge = new VoiceBridge(this);
         simMonitor = new SimMonitor(this, mqtt);
@@ -162,8 +177,14 @@ public class GatewayService extends Service {
                     handleAudioCtrl(msg);
                     break;
                 case "GET_STATE":
-                    // Web 客户端上线/刷新拉当前状态(HELLO 经扇出回到 Web)
+                    // Web 客户端上线/刷新:当前状态 + 历史记录(离线期间来信/来电)
                     publishHello(this.deviceId);
+                    try {
+                        Protocol.Message h = Protocol.envelope(Protocol.T_HISTORY, HistoryStore.read(this));
+                        webHub.broadcast(h);
+                    } catch (Exception e) {
+                        Log.w(TAG, "broadcast history failed: " + e.getMessage());
+                    }
                     break;
                 default:
                     // 本版本不支持的指令,回 UNSUPPORTED
@@ -182,6 +203,7 @@ public class GatewayService extends Service {
         String body = d.getString("body");
         int slot = d.optInt("simSlot", config.defaultSimSlot());
         smsSender.send(to, body, slot, msg.id);
+        HistoryStore.addSms(this, "out", slot, to, body, System.currentTimeMillis());
         // 立即回 ack 表示已受理,实际结果走 SMS_OUT
         ack(msg, true, null, null);
     }
@@ -226,7 +248,7 @@ public class GatewayService extends Service {
             if (wsMode) {
                 // Web 客户端:音频走 WebSocket(浏览器不能发裸 UDP)
                 transport = "ws";
-                fi.iki.elonen.NanoWSD.WebSocket aws = webServer.pollAudioSocket();
+                fi.iki.elonen.NanoWSD.WebSocket aws = webHub.pollAudioSocket();
                 err = aws != null ? voiceBridge.startWeb(dir, aws) : "audio websocket not connected";
             } else {
                 transport = "udp";
@@ -291,6 +313,8 @@ public class GatewayService extends Service {
             data.put("from", intent.getStringExtra(SmsReceiver.EXTRA_FROM));
             data.put("body", intent.getStringExtra(SmsReceiver.EXTRA_BODY));
             data.put("ts", intent.getLongExtra(SmsReceiver.EXTRA_TIMESTAMP, System.currentTimeMillis()));
+            HistoryStore.addSms(this, "in", data.optInt("slot", 0),
+                    data.optString("from", ""), data.optString("body", ""), data.optLong("ts"));
             Protocol.Message m = Protocol.envelope(Protocol.T_SMS_IN, data);
             mqtt.publishEvent("event/sms/in", m);
             Log.i(TAG, "SMS_IN published");
@@ -416,7 +440,9 @@ public class GatewayService extends Service {
             mqtt.publishRetained("status", Protocol.envelope(Protocol.T_BYE, bye));
         } catch (Exception ignored) {}
         if (heartbeatExec != null) heartbeatExec.shutdownNow();
-        if (webServer != null) webServer.stopServer();
+        if (webHttp != null) webHttp.stop();
+        if (webHttps != null) webHttps.stop();
+        if (webHub != null) webHub.stop();
         voiceBridge.stop();
         callMonitor.stop();
         simMonitor.stop();

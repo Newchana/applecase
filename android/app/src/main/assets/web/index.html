@@ -2,209 +2,461 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>苹果皮网关</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f2f3f7">
+<title>电话</title>
 <style>
-:root{--bg:#0f1115;--card:#1a1e26;--line:#2a3040;--tx:#e8ecf4;--sub:#8b94a7;--acc:#4f8cff;--ok:#34c77b;--err:#ff5d5d}
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--tx);font:15px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding-bottom:120px}
-.wrap{max-width:640px;margin:0 auto;padding:14px}
-header{display:flex;align-items:center;gap:8px;padding:10px 2px}
-.dot{width:9px;height:9px;border-radius:50%;background:var(--err);box-shadow:0 0 6px currentColor}
-.dot.on{background:var(--ok)}
-h1{font-size:18px;flex:1}
-.audiobadge{color:var(--ok);font-size:12px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin:10px 0}
-.t{font-size:13px;color:var(--sub);margin-bottom:8px}
-.sims{display:flex;gap:8px}
-.sim{flex:1;background:#232a37;border-radius:10px;padding:8px 10px}
-.sim b{font-size:14px;display:block}
-.sim span{display:block;font-size:12px;color:var(--sub);margin-top:2px}
-input,textarea,button{font:inherit;color:var(--tx);background:#232a37;border:1px solid var(--line);border-radius:10px;padding:9px 11px;width:100%}
-textarea{resize:vertical;min-height:64px}
-button{cursor:pointer;font-weight:600;-webkit-tap-highlight-color:transparent}
-button.pri{background:var(--acc);border-color:var(--acc)}
-button.grn{background:var(--ok);border-color:var(--ok);color:#06281a}
-button.red{background:transparent;border-color:var(--err);color:var(--err)}
-.row{display:flex;gap:8px}.row>*{flex:1}
-.slotbtns{display:flex;gap:6px;margin:8px 0}
-.slotbtns button{padding:6px 0;font-size:13px}
-.slotbtns button.sel{background:var(--acc);border-color:var(--acc)}
-.msg{border-bottom:1px solid var(--line);padding:8px 2px}
-.msg:last-child{border-bottom:none}
-.msg b{font-size:14px}
-.msg p{font-size:14px;margin-top:2px;word-break:break-all}
-.msg small{color:var(--sub);font-size:12px}
-.hint{font-size:12px;color:var(--sub);margin-top:8px}
-.call{position:fixed;left:0;right:0;bottom:0;background:rgba(20,25,34,.96);border-top:1px solid var(--line);padding:14px 14px calc(14px + env(safe-area-inset-bottom));backdrop-filter:blur(10px);z-index:5}
-.call .num{font-size:22px;font-weight:700;text-align:center;margin:4px 0}
-.call .st{text-align:center;color:var(--sub);font-size:13px;margin-bottom:10px}
-#toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);padding:8px 16px;border-radius:20px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:9;max-width:90%}
-#toast.show{opacity:1}
-.list{max-height:300px;overflow:auto}
+:root{
+  --bg:#f2f3f7;--card:#fff;--ink:#1c1c1e;--sub:#86868b;--line:#e6e6eb;
+  --blue:#3478f6;--green:#34c759;--red:#ff3b30;--fill:#e9e9ee;--dark-fill:#d8d8dd;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);
+  font:16px/1.45 -apple-system,"SF Pro Text","PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;overscroll-behavior:none}
+#app{max-width:520px;margin:0 auto;min-height:100%;display:flex;flex-direction:column}
+.view{display:none;flex:1;padding:8px 16px 96px}
+.view.on{display:block}
+
+/* 顶部 */
+.top{display:flex;align-items:center;justify-content:space-between;padding:14px 2px 6px}
+.top h1{font-size:28px;font-weight:700;letter-spacing:-.5px}
+.conn{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--sub)}
+.conn i{width:7px;height:7px;border-radius:50%;background:var(--red);display:block}
+.conn.ok i{background:var(--green)}
+
+/* 分段选择(SIM) */
+.seg{display:flex;background:var(--fill);border-radius:9px;padding:2px;margin:6px 0 2px}
+.seg button{flex:1;border:0;background:transparent;color:var(--ink);font:600 13px/1 inherit;
+  padding:7px 4px;border-radius:7px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px}
+.seg button.sel{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.seg small{font-weight:400;color:var(--sub);font-size:11px}
+
+/* 拨号 */
+#numWrap{display:flex;align-items:center;gap:8px;padding:18px 0 10px}
+#num{flex:1;border:0;background:transparent;outline:0;font:400 30px/1.2 ui-monospace,"SF Mono",Menlo,monospace;
+  letter-spacing:1px;color:var(--ink);min-width:0}
+#num::placeholder{color:#c2c2c8;font-size:22px;letter-spacing:0}
+#del{border:0;background:transparent;padding:8px;cursor:pointer;color:var(--sub);flex:none}
+#del:active{opacity:.4}
+.keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px 14px;max-width:340px;margin:6px auto 2px}
+.key{border:0;background:var(--card);border-radius:50%;aspect-ratio:1.45/1;max-height:76px;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;transition:transform .06s}
+.key:active{transform:scale(.94);background:var(--dark-fill)}
+.key b{font-size:29px;font-weight:400;line-height:1}
+.key span{font-size:10px;letter-spacing:2px;color:var(--sub);text-transform:uppercase;height:12px}
+#callBtn{border:0;background:var(--green);width:74px;height:74px;border-radius:50%;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;margin:14px auto 0;box-shadow:0 6px 18px rgba(52,199,89,.35);transition:transform .06s}
+#callBtn:active{transform:scale(.94)}
+.sec-title{font-size:13px;color:var(--sub);padding:20px 2px 8px;display:flex;justify-content:space-between;align-items:center}
+.sec-title button{border:0;background:transparent;color:var(--blue);font-size:13px;cursor:pointer}
+
+/* 列表 */
+.list{background:var(--card);border-radius:14px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.row .ic{flex:none;width:34px;height:34px;border-radius:50%;background:var(--fill);
+  display:flex;align-items:center;justify-content:center;color:var(--sub)}
+.row.missed .ic{background:#ffe3e1;color:var(--red)}
+.row.out .ic{background:#e2ecff;color:var(--blue)}
+.row .who{flex:1;min-width:0}
+.row .who b{font-size:15px;font-weight:600;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row.missed .who b{color:var(--red)}
+.row .who span{font-size:12px;color:var(--sub)}
+.row .meta{font-size:12px;color:var(--sub);text-align:right;flex:none}
+.empty{padding:26px 0;text-align:center;color:#b6b6bc;font-size:13px}
+
+/* 短信 */
+.composer{background:var(--card);border-radius:14px;padding:12px;margin-top:6px}
+.composer input,.composer textarea{width:100%;border:0;background:var(--bg);border-radius:10px;
+  padding:10px 12px;font:15px/1.4 inherit;color:var(--ink);outline:0;resize:none}
+.composer input{margin-bottom:8px}
+.composer textarea{min-height:60px;margin-bottom:8px}
+.sendRow{display:flex;gap:8px;align-items:center}
+.sendRow .seg{flex:1;margin:0}
+#sendBtn{border:0;background:var(--blue);color:#fff;font:600 14px/1 inherit;padding:11px 20px;border-radius:10px;cursor:pointer}
+#sendBtn:active{opacity:.8}
+.thread{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+.bub{max-width:78%;padding:9px 13px;border-radius:17px;font-size:15px;word-break:break-word;position:relative}
+.bub.in{background:var(--card);align-self:flex-start;border-bottom-left-radius:5px}
+.bub.out{background:var(--blue);color:#fff;align-self:flex-end;border-bottom-right-radius:5px}
+.bub small{display:block;font-size:10px;opacity:.55;margin-top:3px}
+.day-sep{text-align:center;font-size:11px;color:var(--sub);margin:6px 0}
+
+/* 状态页 */
+.card{background:var(--card);border-radius:14px;padding:14px 16px;margin:10px 0}
+.card h3{font-size:13px;color:var(--sub);font-weight:500;margin-bottom:10px}
+.kv{display:flex;justify-content:space-between;font-size:14px;padding:5px 0}
+.kv span{color:var(--sub)}
+.simrow{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.simrow:last-child{border-bottom:0}
+.simrow .nm{flex:1}
+.simrow .nm b{display:block;font-size:15px}
+.simrow .nm span{font-size:12px;color:var(--sub)}
+.bars{display:flex;align-items:flex-end;gap:2.5px;height:16px}
+.bars i{width:3.5px;background:#d4d4da;border-radius:1px}
+.bars i:nth-child(1){height:4px}.bars i:nth-child(2){height:7px}
+.bars i:nth-child(3){height:11px}.bars i:nth-child(4){height:15px}
+.bars i.lit{background:var(--green)}
+.warn{background:#fff8e6;border-radius:10px;padding:10px 12px;font-size:13px;color:#8a6100;margin-top:8px}
+.warn a{color:var(--blue);text-decoration:none;font-weight:600}
+.hint-ok{background:#eaf7ef;color:#1c7a41;border-radius:10px;padding:10px 12px;font-size:13px;margin-top:8px}
+
+/* 底部标签 */
+nav{position:fixed;left:0;right:0;bottom:0;z-index:20;background:rgba(255,255,255,.92);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-top:1px solid var(--line)}
+nav .in{max-width:520px;margin:0 auto;display:flex}
+nav button{flex:1;border:0;background:transparent;padding:7px 0 6px;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--sub);font-size:10px}
+nav button.sel{color:var(--blue)}
+nav svg{width:25px;height:25px}
+nav button:active svg{transform:scale(.92)}
+
+/* 通话全屏 */
+#call{position:fixed;inset:0;z-index:50;background:var(--bg);display:none;
+  flex-direction:column;align-items:center;padding:max(60px,12vh) 30px 60px}
+#call.on{display:flex}
+#call .tag{font-size:13px;color:var(--sub);letter-spacing:2px;margin-bottom:14px}
+#call .cnum{font-size:34px;font-weight:600;letter-spacing:-.5px;text-align:center;word-break:break-all}
+#call .csub{font-size:14px;color:var(--sub);margin-top:8px}
+#call .grow{flex:1}
+#call .btns{display:flex;gap:min(28vw,120px);align-items:center;justify-content:center;padding-bottom:8vh}
+.cbtn{border:0;width:76px;height:76px;border-radius:50%;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#fff;font-size:11px}
+.cbtn:active{transform:scale(.94)}
+.cbtn.answer{background:var(--green);box-shadow:0 8px 24px rgba(52,199,89,.4)}
+.cbtn.decline,.cbtn.end{background:var(--red);box-shadow:0 8px 24px rgba(255,59,48,.35)}
+#ringPulse{animation:pulse 1.6s infinite}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+#bridgeBadge{margin-top:18px;font-size:12px;color:var(--sub);display:flex;align-items:center;gap:6px}
+#bridgeBadge .ok{color:var(--green);font-weight:600}
+
+/* toast */
+#toast{position:fixed;top:16px;left:50%;transform:translateX(-50%) translateY(-8px);z-index:99;
+  background:rgba(28,28,30,.92);color:#fff;font-size:13px;padding:9px 18px;border-radius:20px;
+  opacity:0;transition:.25s;pointer-events:none;max-width:86%;text-align:center}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header><div class="dot" id="dot"></div><h1>苹果皮网关</h1><span class="audiobadge" id="ab"></span></header>
+<div id="app">
 
-  <div class="card">
-    <div class="t">双卡状态</div>
-    <div class="sims" id="sims"><div class="sim"><span>连接中…</span></div></div>
-  </div>
-
-  <div class="card">
-    <div class="t">拨号(声音走本页,Q968 已自动静音)</div>
-    <input id="num" placeholder="号码,如 10010" inputmode="tel">
-    <div class="slotbtns" id="cslot"></div>
-    <div class="row">
-      <button class="pri" id="dial">📞 拨出</button>
-      <button id="hang">挂断</button>
+  <!-- 拨号 -->
+  <section class="view on" id="v-dial">
+    <div class="top"><h1>拨号</h1>
+      <div class="conn" id="conn"><i></i><span>连接中</span></div></div>
+    <div class="seg" id="dialSeg"></div>
+    <div id="numWrap">
+      <input id="num" placeholder="输入号码" inputmode="tel" autocomplete="off">
+      <button id="del" aria-label="删除">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 5H8l-5 7 5 7h13a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z"/><line x1="12" y1="9" x2="17" y2="14"/><line x1="17" y1="9" x2="12" y2="14"/></svg>
+      </button>
     </div>
-    <div class="hint">通话接通后自动开启语音桥(需允许麦克风);对着手机说话即走 Q968 的卡</div>
-  </div>
+    <div class="keypad" id="keypad"></div>
+    <button id="callBtn" aria-label="拨出">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="#fff"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.6.1.3 0 .7-.2 1l-2.3 2.2z"/></svg>
+    </button>
+    <div class="sec-title"><span>最近通话</span><button id="clearCalls">清除</button></div>
+    <div class="list" id="callList"><div class="empty">暂无通话</div></div>
+  </section>
 
-  <div class="card">
-    <div class="t">发短信</div>
-    <input id="sto" placeholder="收件号码" inputmode="tel" style="margin-bottom:8px">
-    <textarea id="sbody" placeholder="短信内容"></textarea>
-    <div class="slotbtns" id="sslot"></div>
-    <button class="pri" id="send">✉️ 发送</button>
-  </div>
+  <!-- 短信 -->
+  <section class="view" id="v-sms">
+    <div class="top"><h1>短信</h1></div>
+    <div class="composer">
+      <input id="sto" placeholder="收件人号码" inputmode="tel">
+      <textarea id="sbody" placeholder="短信内容"></textarea>
+      <div class="sendRow">
+        <div class="seg" id="smsSeg"></div>
+        <button id="sendBtn">发送</button>
+      </div>
+    </div>
+    <div class="sec-title"><span>全部消息</span><button id="clearSms">清除</button></div>
+    <div class="thread" id="msgs"><div class="empty">暂无消息</div></div>
+  </section>
 
-  <div class="card">
-    <div class="t">短信记录</div>
-    <div class="list" id="msgs"><div class="msg"><small>暂无</small></div></div>
-  </div>
+  <!-- 状态 -->
+  <section class="view" id="v-info">
+    <div class="top"><h1>状态</h1></div>
+    <div class="card"><h3>SIM 卡</h3><div id="sims"><div class="empty">读取中</div></div></div>
+    <div class="card"><h3>网关</h3>
+      <div class="kv"><span>设备</span><b id="iDev">-</b></div>
+      <div class="kv"><span>固件</span><b id="iFw">-</b></div>
+      <div class="kv"><span>IP</span><b id="iIp">-</b></div>
+      <div class="kv"><span>连接</span><b id="iConn">-</b></div>
+    </div>
+    <div class="card"><h3>语音</h3><div id="secInfo"></div></div>
+  </section>
 
-  <div class="card">
-    <div class="t">通话记录</div>
-    <div class="list" id="logs"><div class="msg"><small>暂无</small></div>
-  </div>
+  <nav><div class="in">
+    <button data-v="dial" class="sel">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 5v-1.5M12 20.5V19M19 12h1.5M3.5 12H5M16.9 7.1l1-1M6.1 17.9l-1 1M16.9 16.9l1 1M6.1 6.1l-1-1"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>
+      拨号</button>
+    <button data-v="sms">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5c0 4.1-4 7.5-9 7.5-1 0-2-.1-2.9-.4L4 20l1.2-3.6C3.8 15.1 3 13.4 3 11.5 3 7.4 7 4 12 4s9 3.4 9 7.5z"/></svg>
+      短信</button>
+    <button data-v="info">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="10.5" x2="12" y2="16"/><circle cx="12" cy="7.8" r="1" fill="currentColor" stroke="none"/></svg>
+      状态</button>
+  </div></nav>
 </div>
 
-<div class="call" id="callbox" style="display:none">
-  <div class="num" id="cnum"></div>
-  <div class="st" id="cst"></div>
-  <div class="row">
-    <button class="grn" id="ans">接听</button>
-    <button class="red" id="end">挂断</button>
-  </div>
+<!-- 通话全屏 -->
+<div id="call">
+  <div class="tag" id="cTag">来电</div>
+  <div class="cnum" id="cNum"></div>
+  <div class="csub" id="cSub"></div>
+  <div id="bridgeBadge" style="display:none"><span class="ok">语音桥已开启</span></div>
+  <div class="grow"></div>
+  <div class="btns" id="cBtns"></div>
 </div>
+
 <div id="toast"></div>
 
 <script>
-const $=id=>document.getElementById(id);
+'use strict';
+const $=s=>document.querySelector(s);
+const $$=s=>[...document.querySelectorAll(s)];
 const WS_BASE=(location.protocol==='https:'?'wss://':'ws://')+location.host;
-let ctrl=null, callSlot=0, smsSlot=0;
-let SIMS=[], active=null, logEls={};
+const MIC_OK=!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia);
 
-// ---------- 控制通道 ----------
+/* ---------- 状态 ---------- */
+let ctrl=null,connected=false;
+let SIMS=[],dialSlot=0,smsSlot=0;
+let active=null,callsHist=[],smsHist=[],logEls={};
+
+/* ---------- 基础 ---------- */
+function toast(s){const t=$('#toast');t.textContent=s;t.classList.add('show');
+  clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2200)}
+function uid(){return crypto.randomUUID?crypto.randomUUID():'w'+Date.now()+Math.random()}
+function sendCmd(type,data){if(ctrl&&ctrl.readyState===1)
+  ctrl.send(JSON.stringify({v:1,id:uid(),type,ts:Date.now(),token:'web',data}))}
+function fmtTs(ts){if(!ts)return'';const d=new Date(ts),n=new Date();
+  if(d.toDateString()===n.toDateString())return d.toTimeString().slice(0,5);
+  return (d.getMonth()+1)+'/'+d.getDate()}
+function fmtDur(s){if(!s)return'';return s>=60?Math.floor(s/60)+'分'+(s%60)+'秒':s+'秒'}
+
+/* ---------- 控制通道 ---------- */
 function connectCtrl(){
   ctrl=new WebSocket(WS_BASE+'/ws');
-  ctrl.onopen=()=>{$('dot').classList.add('on');sendCmd('GET_STATE',{})};
-  ctrl.onclose=()=>{$('dot').classList.remove('on');setTimeout(connectCtrl,2000)};
+  ctrl.onopen=()=>{connected=true;setConn();sendCmd('GET_STATE',{})};
+  ctrl.onclose=()=>{connected=false;setConn();setTimeout(connectCtrl,2000)};
   ctrl.onerror=()=>{try{ctrl.close()}catch(e){}};
   ctrl.onmessage=e=>{try{handle(JSON.parse(e.data))}catch(err){}};
 }
-function sendCmd(type,data){
-  if(!ctrl||ctrl.readyState!==1)return;
-  ctrl.send(JSON.stringify({v:1,id:uid(),type,ts:Date.now(),token:'web',data}));
-}
-function uid(){return (crypto.randomUUID?crypto.randomUUID():'w'+Date.now()+Math.random())}
+function setConn(){const c=$('#conn');
+  c.classList.toggle('ok',connected);
+  c.querySelector('span').textContent=connected?'已连接':'重连中';}
 
+/* ---------- 事件处理 ---------- */
 function handle(m){
   const d=m.data||{};
   switch(m.type){
     case 'HELLO':
-      SIMS=d.sims||[];
-      $('sims').innerHTML=SIMS.map(s=>
-        `<div class="sim"><b>卡${s.slot} ${s.carrier}</b><span>${s.state} · 信号${s.signal}${s.number?' · '+s.number:''}</span></div>`).join('')
-        ||'<div class="sim"><span>未检测到 SIM</span></div>';
-      renderSlots();break;
-    case 'SIM_STATE':
-      {const s=SIMS.find(x=>x.slot===d.slot);if(s){s.state=d.state;s.signal=d.signal;s.carrier=d.carrier||s.carrier;handle({type:'HELLO',data:{sims:SIMS}})}break}
-    case 'SMS_IN': addMsg(d); break;
-    case 'SMS_OUT': toast('短信 '+(d.status||'')+(d.error?'('+d.error+')':'')); break;
+      SIMS=d.sims||[];renderSegs();renderSims();
+      $('#iDev').textContent=d.deviceId||'-';
+      $('#iFw').textContent=d.fw||'-';
+      $('#iIp').textContent=d.ip||'-';
+      break;
+    case 'HISTORY':
+      callsHist=d.calls||[];smsHist=d.sms||[];
+      renderCallList();renderMsgs();break;
+    case 'SMS_IN':
+      smsHist.push({dir:'in',slot:d.slot,addr:d.from,body:d.body,ts:d.ts});
+      renderMsgs();break;
+    case 'SMS_OUT':
+      toast('已'+(d.status==='delivered'?'送达':d.status==='sent'?'发出':'失败'));break;
     case 'CALL_INCOMING':
       active={callId:d.id,from:d.from||'未知号码',slot:d.slot,state:'ringing',dir:'in'};
-      addLog(active); showCall(); break;
-    case 'CALL_STATE':
+      showCall();break;
+    case 'CALL_STATE':{
+      const st=d.state;
       if(!active||active.callId!==d.ref){
-        active={callId:d.ref,from:(d.from&&d.from!=='?')?d.from:'未知号码',slot:d.slot,state:d.state,dir:d.dir||'in'};
-        addLog(active);
-      }else{
-        active.state=d.state;
-        if(d.from&&d.from!=='?')active.from=d.from;
-      }
-      if(logEls[d.ref])logEls[d.ref].textContent='卡'+(d.slot!=null?d.slot:'')+' · '+stTxt(d.state);
+        active={callId:d.ref,from:(d.from&&d.from!=='?')?d.from:'未知号码',
+                slot:d.slot,state:st,dir:d.dir||'in'};
+      }else{active.state=st;
+        if(d.from&&d.from!=='?')active.from=d.from}
       showCall();
-      if(active.state==='active'&&!audioOn)startAudio();
-      if(active.state==='ended'||active.state==='missed'){
-        stopAudio();
-        setTimeout(()=>{if(active&&active.state!=='ringing'&&active.state!=='active'){active=null;showCall()}},1600);
+      if(st==='active'){stopRing();startAudio()}
+      if(st==='ended'||st==='missed'){
+        stopRing();stopAudio();
+        callsHist.unshift({dir:active.dir,slot:active.slot,addr:active.from,state:st,
+          ts:Date.now(),dur:0});
+        renderCallList();
+        setTimeout(()=>{if(active&&active.state!=='ringing'&&active.state!=='active'){active=null;showCall()}},1500);
       }
-      break;
+      break}
     case 'CMD_ACK':
-      if(d.ok===false)toast('指令失败:'+(d.error||'')+(d.detail?' '+d.detail:''));break;
+      if(d.ok===false)toast('失败:'+(d.error||'')+(d.detail?' '+d.detail:''));break;
   }
 }
-function stTxt(s){return {ringing:'响铃',active:'通话中',ended:'已结束',missed:'未接'}[s]||s}
 
-function renderSlots(){
+/* ---------- 渲染:SIM/分段 ---------- */
+function renderSegs(){
   const mk=(el,sel,fn)=>{
     el.innerHTML='';
     SIMS.forEach(s=>{
       const b=document.createElement('button');
-      b.textContent='卡'+s.slot+' '+(s.carrier||'');
+      b.innerHTML='卡'+s.slot+' <small>'+(s.carrier||'')+'</small>';
       if(s.slot===sel)b.classList.add('sel');
-      b.onclick=()=>{fn(s.slot);renderSlots()};
-      el.appendChild(b);
-    });
+      b.onclick=()=>{fn(s.slot);renderSegs()};
+      el.appendChild(b)});
   };
   if(!SIMS.length)return;
-  mk($('cslot'),callSlot,v=>callSlot=v);
-  mk($('sslot'),smsSlot,v=>smsSlot=v);
+  mk($('#dialSeg'),dialSlot,v=>dialSlot=v);
+  mk($('#smsSeg'),smsSlot,v=>smsSlot=v);
 }
-function addMsg(d){
-  const box=$('msgs'); if(box.firstElementChild&&box.children.length===1&&!box.dataset.had){box.innerHTML='';box.dataset.had=1}
-  const div=document.createElement('div');div.className='msg';
-  const b=document.createElement('b');b.textContent=d.from;
-  const sm=document.createElement('small');sm.textContent='卡'+(d.slot||0)+' · '+new Date(d.ts||Date.now()).toLocaleString();
-  const p=document.createElement('p');p.textContent=d.body;
-  div.append(b,' ',sm,p);box.prepend(div);
+function renderSims(){
+  $('#sims').innerHTML=SIMS.map(s=>{
+    const lv=Math.max(0,Math.min(4,s.signal??0));
+    const bars=[1,2,3,4].map(i=>'<i class="'+(i<=lv?'lit':'')+'"></i>').join('');
+    return '<div class="simrow"><div class="nm"><b>卡'+s.slot+' · '+s.carrier+'</b>'
+      +'<span>'+s.state+(s.number?' · '+s.number:'')+'</span></div>'
+      +'<div class="bars">'+bars+'</div></div>'}).join('')
+    ||'<div class="empty">未检测到 SIM</div>';
 }
-function addLog(c){
-  const box=$('logs'); if(!box.dataset.had){box.innerHTML='';box.dataset.had=1}
-  const div=document.createElement('div');div.className='msg';
-  const b=document.createElement('b');b.textContent=(c.dir==='out'?'↗ ':'↙ ')+c.from;
-  const sm=document.createElement('small');sm.id='l'+c.callId;sm.textContent='卡'+(c.slot!=null?c.slot:'')+' · '+stTxt(c.state);
-  div.append(b,' ',sm);box.prepend(div);logEls[c.callId]=sm;
-}
-function showCall(){
-  const b=$('callbox');
-  if(!active){b.style.display='none';return}
-  if(active.state==='ringing'||active.state==='active'){
-    b.style.display='block';
-    $('cnum').textContent=active.from;
-    $('cst').textContent=(active.state==='ringing'?'来电响铃':'通话中')+' · 卡'+active.slot+(audioOn?' · 语音桥已开启':'');
-    $('ans').style.display=active.state==='ringing'?'':'none';
-  }
-}
-function toast(s){const t=$('toast');t.textContent=s;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2200)}
 
-// ---------- 操作 ----------
-$('dial').onclick=()=>{const n=$('num').value.trim();if(!n)return toast('先填号码');ensureCtx();sendCmd('CALL_PLACE',{to:n,simSlot:callSlot})};
-$('hang').onclick=()=>sendCmd('CALL_CONTROL',{action:'hangup'});
-$('ans').onclick=()=>{ensureCtx();sendCmd('CALL_CONTROL',{action:'answer'})};
-$('end').onclick=()=>sendCmd('CALL_CONTROL',{action:'hangup'});
-$('send').onclick=()=>{
-  const to=$('sto').value.trim(),b=$('sbody').value.trim();
-  if(!to||!b)return toast('填号码和内容');
-  sendCmd('SMS_SEND',{to,body:b,simSlot:smsSlot});$('sbody').value='';
+/* ---------- 渲染:通话列表 ---------- */
+const IC_IN='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="15"/><polyline points="14 17 20 15 18 9"/></svg>';
+const IC_OUT='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="15" x2="20" y2="9"/><polyline points="18 15 20 9 14 7"/></svg>';
+function renderCallList(){
+  const el=$('#callList');
+  if(!callsHist.length){el.innerHTML='<div class="empty">暂无通话</div>';return}
+  el.innerHTML=callsHist.slice(0,30).map(c=>{
+    const missed=c.state==='missed';
+    return '<div class="row '+(missed?'missed':c.dir==='out'?'out':'')+'">'
+      +'<div class="ic">'+(c.dir==='out'?IC_OUT:IC_IN)+'</div>'
+      +'<div class="who"><b>'+esc(c.addr)+'</b><span>卡'+(c.slot??0)+(c.dur?' · '+fmtDur(c.dur):'')+'</span></div>'
+      +'<div class="meta">'+(missed?'未接':fmtTs(c.ts))+'</div></div>'}).join('');
+}
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+
+/* ---------- 渲染:短信 ---------- */
+function renderMsgs(){
+  const el=$('#msgs');
+  if(!smsHist.length){el.innerHTML='<div class="empty">暂无消息</div>';return}
+  el.innerHTML=smsHist.slice(-60).map(s=>{
+    const t=new Date(s.ts);
+    return '<div class="bub '+s.dir+'">'+esc(s.body)
+      +'<small>'+esc(s.addr)+' · 卡'+(s.slot??0)+' · '+fmtTs(s.ts)+'</small></div>'}).join('');
+  // 滚到底部(仅短信页可见时)
+  if($('#v-sms').classList.contains('on'))el.scrollIntoView({block:'end'});
+}
+
+/* ---------- 拨号键盘 ---------- */
+const KEYS=[['1',''],['2','abc'],['3','def'],['4','ghi'],['5','jkl'],['6','mno'],
+            ['7','pqrs'],['8','tuv'],['9','wxyz'],['*',''],['0','+'],['#','']];
+(function(){
+  const kp=$('#keypad');
+  KEYS.forEach(([d,l])=>{
+    const b=document.createElement('button');b.className='key';
+    b.innerHTML='<b>'+d+'</b><span>'+l+'</span>';
+    b.onclick=()=>{$('#num').value+=d};
+    kp.appendChild(b)});
+})();
+$('#del').onclick=()=>{const i=$('#num');i.value=i.value.slice(0,-1)};
+$('#num').addEventListener('keydown',e=>{if(e.key==='Enter')dial()});
+$('#callBtn').onclick=dial;
+function dial(){
+  const n=$('#num').value.replace(/\s+/g,'');
+  if(!n)return toast('先输入号码');
+  ensureCtx();
+  sendCmd('CALL_PLACE',{to:n,simSlot:dialSlot});
+}
+
+/* ---------- 短信发送 ---------- */
+$('#sendBtn').onclick=()=>{
+  const to=$('#sto').value.trim(),b=$('#sbody').value.trim();
+  if(!to||!b)return toast('填写号码和内容');
+  sendCmd('SMS_SEND',{to,body:b,simSlot:smsSlot});
+  smsHist.push({dir:'out',slot:smsSlot,addr:to,body:b,ts:Date.now()});
+  $('#sbody').value='';renderMsgs();
 };
+$('#clearCalls').onclick=()=>{callsHist=[];renderCallList()};
+$('#clearSms').onclick=()=>{smsHist=[];renderMsgs()};
 
-// ---------- 语音桥(WebSocket 版) ----------
+/* ---------- 标签切换 ---------- */
+$$('nav button').forEach(b=>b.onclick=()=>{
+  $$('nav button').forEach(x=>x.classList.toggle('sel',x===b));
+  $$('.view').forEach(v=>v.classList.remove('on'));
+  $('#v-'+b.dataset.v).classList.add('on');
+  if(b.dataset.v==='sms')renderMsgs();
+});
+
+/* ---------- 通话全屏 ---------- */
+const SVG_ANS='<svg width="30" height="30" viewBox="0 0 24 24" fill="#fff"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.6.1.3 0 .7-.2 1l-2.3 2.2z"/></svg>';
+const SVG_END='<svg width="30" height="30" viewBox="0 0 24 24" fill="#fff" style="transform:rotate(135deg)"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.6.1.3 0 .7-.2 1l-2.3 2.2z"/></svg>';
+let callTimer=null,ringInt=null,ringOsc=null;
+function showCall(){
+  const el=$('#call');
+  if(!active){el.classList.remove('on');stopRing();stopTick();return}
+  const s=active.state;
+  if(s!=='ringing'&&s!=='active'){el.classList.remove('on');stopTick();return}
+  el.classList.add('on');
+  $('#cNum').textContent=active.from;
+  $('#cSub').textContent=(SIMS.find(x=>x.slot===active.slot)?.carrier||('卡'+active.slot));
+  const btns=$('#cBtns');
+  if(s==='ringing'){
+    $('#cTag').textContent='来电';
+    $('#call').style.background='#fff';
+    btns.innerHTML='<button class="cbtn decline" id="bDecl">'+SVG_END+'拒接</button>'
+                  +'<button class="cbtn answer" id="bAns" style="animation:pulse 1.6s infinite">'+SVG_ANS+'接听</button>';
+    $('#bAns').onclick=()=>{ensureCtx();sendCmd('CALL_CONTROL',{action:'answer'})};
+    $('#bDecl').onclick=()=>sendCmd('CALL_CONTROL',{action:'hangup'});
+    startRing();
+  }else{
+    $('#cTag').textContent='通话中';
+    $('#call').style.background='var(--bg)';
+    btns.innerHTML='<button class="cbtn end" id="bEnd">'+SVG_END+'挂断</button>';
+    $('#bEnd').onclick=()=>sendCmd('CALL_CONTROL',{action:'hangup'});
+    startTick();
+  }
+  $('#bridgeBadge').style.display=audioOn?'flex':'none';
+}
+function startTick(){
+  stopTick();
+  const t0=Date.now();
+  callTimer=setInterval(()=>{
+    const s=Math.floor((Date.now()-t0)/1000);
+    const mm=String(Math.floor(s/60)),ss=String(s%60).padStart(2,'0');
+    $('#cTag').textContent=mm+':'+ss;
+  },500);
+}
+function stopTick(){clearInterval(callTimer);callTimer=null}
+
+/* 铃声:WebAudio 双音断续(无手势时静默失败,靠全屏视觉+振动) */
+function startRing(){
+  stopRing();
+  try{navigator.vibrate&&navigator.vibrate([400,200,400,200,400,1800])}catch(e){}
+  // 每 2.4s 一轮铃(双音),同时振动
+  const ringOnce=()=>{
+    if(!active||active.state!=='ringing')return;
+    try{
+      ensureCtx();
+      const t=actx.currentTime;
+      [0,0.35].forEach(off=>{
+        const o=actx.createOscillator(),g=actx.createGain();
+        o.frequency.value=off?620:780;o.type='sine';
+        g.gain.setValueAtTime(0.001,t+off);
+        g.gain.exponentialRampToValueAtTime(0.28,t+off+0.05);
+        g.gain.exponentialRampToValueAtTime(0.001,t+off+0.3);
+        o.connect(g);g.connect(actx.destination);
+        o.start(t+off);o.stop(t+off+0.32)});
+    }catch(e){}
+    try{navigator.vibrate&&navigator.vibrate([500,300,500])}catch(e){}
+  };
+  ringOnce();
+  ringInt=setInterval(ringOnce,2400);
+  document.title='来电 · '+active.from;
+}
+function stopRing(){
+  clearInterval(ringInt);ringInt=null;ringOsc=null;
+  try{navigator.vibrate&&navigator.vibrate(0)}catch(e){}
+  document.title='电话';
+}
+
+/* ---------- 语音桥 ---------- */
 let actx=null,audioWs=null,proc=null,micStream=null,audioOn=false;
 let upBuf=new Int16Array(0),upSeq=0,playNext=0;
 
@@ -214,20 +466,36 @@ function ensureCtx(){
     try{actx=new AC({sampleRate:16000})}catch(e){actx=new AC()}
   }
   if(actx.state==='suspended')actx.resume();
+  return actx;
 }
 function startAudio(){
   ensureCtx();
   audioWs=new WebSocket(WS_BASE+'/audio');
   audioWs.binaryType='arraybuffer';
   audioWs.onopen=()=>{
-    sendCmd('AUDIO_CTRL',{action:'start',dir:'both',codec:'pcm16',params:{ws:true}});
-    navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}})
-      .then(st=>{micStream=st;startMic()})
-      .catch(e=>toast('麦克风权限失败:'+e.message));
-    audioOn=true;$('ab').textContent='🎙 语音桥';showCall();
+    sendCmd('AUDIO_CTRL',{action:'start',dir:MIC_OK?'both':'down',codec:'pcm16',params:{ws:true}});
+    if(MIC_OK){
+      navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}})
+        .then(st=>{micStream=st;startMic()})
+        .catch(e=>{toast('麦克风不可用:'+(e.name||e.message));$('#bridgeBadge').style.display='flex'});
+    }
+    audioOn=true;$('#bridgeBadge').style.display='flex';
+    $('#bridgeBadge').innerHTML=MIC_OK?'<span class="ok">语音桥已开启</span>'
+      :'<span style="color:#8a6100">仅收听 · 麦克风需 HTTPS</span>';
   };
   audioWs.onmessage=e=>playFrame(e.data);
-  audioWs.onclose=()=>{audioOn=false;$('ab').textContent='';showCall()};
+  audioWs.onclose=()=>{audioOn=false;$('#bridgeBadge').style.display='none'};
+}
+/* 任意采样率 → 16k 线性重采样 */
+function resample16k(input,from){
+  if(from===16000)return input;
+  const ratio=from/16000,outLen=Math.floor(input.length/ratio),out=new Float32Array(outLen);
+  for(let i=0;i<outLen;i++){
+    const pos=i*ratio,i0=Math.floor(pos),fr=pos-i0;
+    const a=input[i0],b=i0+1<input.length?input[i0+1]:a;
+    out[i]=a+(b-a)*fr;
+  }
+  return out;
 }
 function startMic(){
   const src=actx.createMediaStreamSource(micStream);
@@ -235,9 +503,10 @@ function startMic(){
   src.connect(proc);proc.connect(actx.destination);
   proc.onaudioprocess=e=>{
     if(!audioWs||audioWs.readyState!==1)return;
-    const f=e.inputBuffer.getChannelData(0);
-    const ints=new Int16Array(f.length);
-    for(let i=0;i<f.length;i++){const v=Math.max(-1,Math.min(1,f[i]));ints[i]=v<0?v*32768:v*32767}
+    const raw=e.inputBuffer.getChannelData(0);
+    const f16=resample16k(raw,actx.sampleRate);
+    const ints=new Int16Array(f16.length);
+    for(let i=0;i<f16.length;i++){const v=Math.max(-1,Math.min(1,f16[i]));ints[i]=v<0?v*32768:v*32767}
     const merged=new Int16Array(upBuf.length+ints.length);
     merged.set(upBuf);merged.set(ints,upBuf.length);
     let off=0;const FR=320;
@@ -270,13 +539,32 @@ function playFrame(ab){
 }
 function stopAudio(){
   try{sendCmd('AUDIO_CTRL',{action:'stop'})}catch(e){}
-  audioOn=false;$('ab').textContent='';
+  audioOn=false;$('#bridgeBadge').style.display='none';
   if(proc){try{proc.disconnect()}catch(e){};proc=null}
   if(micStream){micStream.getTracks().forEach(t=>t.stop());micStream=null}
   if(audioWs){audioWs.onclose=null;try{audioWs.close()}catch(e){};audioWs=null}
   upBuf=new Int16Array(0);playNext=0;
 }
+window.addEventListener('beforeunload',()=>{
+  try{sendCmd('AUDIO_CTRL',{action:'stop'})}catch(e){}
+});
 
+/* ---------- 语音/安全提示 ---------- */
+(function(){
+  const el=$('#secInfo');
+  if(window.isSecureContext&&MIC_OK){
+    el.innerHTML='<div class="hint-ok">麦克风可用,通话支持双向语音</div>';
+  }else if(!window.isSecureContext){
+    const hp='https://'+location.hostname+':8443';
+    el.innerHTML='<div class="warn">当前是 HTTP,浏览器禁用麦克风 —— 通话只能听到对方,不能说话。<br>'
+      +'语音对讲请用 <a href="'+hp+'">HTTPS 地址</a>(自签证书,点"继续访问"即可)。</div>';
+  }else{
+    el.innerHTML='<div class="warn">此浏览器不支持麦克风采集,通话仅可收听。</div>';
+  }
+})();
+$('#iConn').textContent=(window.isSecureContext?'HTTPS':'HTTP')+' · '+(MIC_OK?'麦克风可用':'无麦克风');
+
+/* ---------- 启动 ---------- */
 connectCtrl();
 </script>
 </body>

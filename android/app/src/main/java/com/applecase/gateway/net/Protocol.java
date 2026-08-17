@@ -30,6 +30,7 @@ public class Protocol {
     public static final String T_CALL_CONTROL  = "CALL_CONTROL";
     public static final String T_SIM_STATE     = "SIM_STATE";
     public static final String T_AUDIO_CTRL    = "AUDIO_CTRL";
+    public static final String T_HISTORY      = "HISTORY";   // GW→Web:历史记录(短信/通话)
 
     /** 鉴权密钥,由 GatewayService 启动时注入(取自 BuildConfig.PRESHARED_KEY)。 */
     private static String presharedKey = "dev-secret-change-me";

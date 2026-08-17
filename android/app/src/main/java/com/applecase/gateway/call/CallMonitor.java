@@ -11,6 +11,7 @@ import android.util.Log;
 
 import androidx.core.content.ContextCompat;
 
+import com.applecase.gateway.HistoryStore;
 import com.applecase.gateway.net.MqttClient;
 import com.applecase.gateway.net.Protocol;
 import com.applecase.gateway.sim.SimMonitor;
@@ -90,6 +91,7 @@ public class CallMonitor {
         boolean answered = false;  // 接通过(OFFHOOK 过)
         boolean outgoing = false;  // 去电(没响铃直接 OFFHOOK)
         boolean incomingPublished = false;
+        long activeAt = 0;         // 接通时刻(算时长用)
     }
     private final Map<Integer, CallCtx> calls = new HashMap<>();
 
@@ -117,6 +119,10 @@ public class CallMonitor {
                         }
                     }
                 }
+                // 兜底驱动:部分 ROM 的 per-sub 监听收不到来电 RINGING,
+                // 用 PHONE_STATE 广播的状态补(800ms 内 per-sub 先到则以它为准)
+                String st = intent.getStringExtra(TelephonyManager.EXTRA_STATE);
+                if (st != null) broadcastFallback(st);
             }
         };
         ContextCompat.registerReceiver(context, numberReceiver,
@@ -209,6 +215,7 @@ public class CallMonitor {
                 if (ctx.ringing) {
                     ctx.answered = true;
                     if (ctx.from.isEmpty()) ctx.from = freshNumber();
+                    ctx.activeAt = System.currentTimeMillis();
                     publishState(ctx, "active", "in");
                     notifyActive(slot);
                 } else if (!ctx.answered) {
@@ -234,6 +241,7 @@ public class CallMonitor {
                     if (ctx.from.isEmpty()) maybePendingOut(ctx, slot);
                     String endState = (ctx.ringing && !ctx.answered) ? "missed" : "ended";
                     publishState(ctx, endState, ctx.outgoing ? "out" : "in");
+                    recordCall(ctx, endState);
                     if (onCallEnd != null) {
                         try { onCallEnd.run(); } catch (Exception e) { Log.w(TAG, "onCallEnd cb: " + e.getMessage()); }
                     }
@@ -249,6 +257,45 @@ public class CallMonitor {
     private void notifyActive(int slot) {
         if (onCallActive != null) {
             try { onCallActive.accept(slot); } catch (Exception e) { Log.w(TAG, "onCallActive cb: " + e.getMessage()); }
+        }
+    }
+
+    /**
+     * PHONE_STATE 广播兜底状态机(本机 ROM 实测不带 subscription extra,只能整体兜):
+     * - RINGING:等 800ms,若 per-sub 监听已捕获任一响铃则跳过;否则按默认卡注入来电
+     * - IDLE:等 1.2s,仍有"响过铃未接"的上下文则补发 missed(per-sub IDLE 失效时兜底)
+     */
+    private void broadcastFallback(String state) {
+        if (TelephonyManager.EXTRA_STATE_RINGING.equals(state)) {
+            main.postDelayed(() -> {
+                for (CallCtx c : calls.values()) if (c.ringing) return;
+                java.util.List<Integer> subs = simMonitor.activeSubIds();
+                if (subs.isEmpty()) return;
+                int subId = subs.get(0);
+                int slot = simMonitor.slotForSubId(subId);
+                if (slot < 0) slot = 0;
+                CallCtx ctx = new CallCtx();
+                ctx.slot = slot;
+                ctx.ringing = true;
+                ctx.from = freshNumber();
+                ctx.callId = "call-" + System.currentTimeMillis();
+                ctx.incomingPublished = true;
+                calls.put(subId, ctx);
+                Log.i(TAG, "incoming via broadcast fallback, slot=" + slot + " from=" + ctx.from);
+                publishIncoming(ctx);
+            }, 800);
+        } else if (TelephonyManager.EXTRA_STATE_IDLE.equals(state)) {
+            main.postDelayed(() -> {
+                calls.values().removeIf(c -> {
+                    if (c.ringing && !c.answered) {
+                        if (c.from.isEmpty()) c.from = freshNumber();
+                        publishState(c, "missed", "in");
+                        recordCall(c, "missed");
+                        return true;
+                    }
+                    return false;
+                });
+            }, 1200);
         }
     }
 
@@ -296,6 +343,18 @@ public class CallMonitor {
         } catch (JSONException e) {
             Log.w(TAG, "build CALL_STATE failed: " + e.getMessage());
         }
+    }
+
+    /** 结束的通话写入历史(Web 页面离线期间也能回看)。 */
+    private void recordCall(CallCtx ctx, String state) {
+        try {
+            long dur = ctx.activeAt > 0 ? (System.currentTimeMillis() - ctx.activeAt) / 1000 : 0;
+            long ts = 0;
+            try { ts = Long.parseLong(ctx.callId.replaceAll("[^0-9]", "")); } catch (Exception ignored) {}
+            HistoryStore.addCall(context, ctx.slot,
+                    ctx.from.isEmpty() ? "?" : ctx.from,
+                    ctx.outgoing ? "out" : "in", state, ts, dur);
+        } catch (Exception ignored) {}
     }
 
     // ============ 监听器实现 ============

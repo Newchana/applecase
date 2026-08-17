@@ -76,18 +76,21 @@ public class CallController {
         }
     }
 
-    /** 接听响铃中的来电。 */
+    /** 接听响铃中的来电:先走标准 API,不行用 root 模拟耳机键兜底。 */
     public String answer() {
         try {
             telecom.acceptRingingCall();
             Log.i(TAG, "acceptRingingCall");
             return OK;
-        } catch (SecurityException e) {
-            Log.e(TAG, "no ANSWER_PHONE_CALLS: " + e.getMessage());
+        } catch (Exception e1) {
+            // 部分 ROM 对非默认拨号应用静默失败/抛错 → root 发 HEADSETHOOK 接听
+            Log.w(TAG, "acceptRingingCall failed(" + e1.getMessage() + "), fallback keyevent");
+            String out = execRoot("input keyevent 79");   // KEYCODE_HEADSEHOOK
+            if (out != null) {
+                Log.i(TAG, "answer via keyevent 79");
+                return OK;
+            }
             return ERR_NO_PERMISSION;
-        } catch (Exception e) {
-            Log.e(TAG, "acceptRingingCall failed: " + e.getMessage());
-            return ERR_CALL_FAILED;
         }
     }
 
