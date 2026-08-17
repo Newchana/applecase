@@ -17,11 +17,11 @@ import android.util.Log;
 import androidx.core.app.NotificationCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
+import com.applecase.gateway.audio.VoiceBridge;
 import com.applecase.gateway.call.CallController;
 import com.applecase.gateway.call.CallMonitor;
 import com.applecase.gateway.net.MqttClient;
 import com.applecase.gateway.net.Protocol;
-import com.applecase.gateway.net.UdpAudioSocket;
 import com.applecase.gateway.sim.SimMonitor;
 import com.applecase.gateway.sms.SmsReceiver;
 import com.applecase.gateway.sms.SmsSentReceiver;
@@ -53,7 +53,7 @@ public class GatewayService extends Service {
 
     private MqttClient mqtt;
     private SmsSender smsSender;
-    private UdpAudioSocket udpAudio;
+    private VoiceBridge voiceBridge;
     private SimMonitor simMonitor;
     private CallMonitor callMonitor;
     private CallController callController;
@@ -77,7 +77,7 @@ public class GatewayService extends Service {
         mqtt = new MqttClient(deviceId, config.brokerHost(), config.brokerPort(),
                 config.mqttUser(), config.mqttPass());
         smsSender = new SmsSender(this, mqtt);
-        udpAudio = new UdpAudioSocket(UdpAudioSocket.DEFAULT_PORT);
+        voiceBridge = new VoiceBridge(this);
         simMonitor = new SimMonitor(this, mqtt);
         // 本机号码:卡上多不存 MSISDN,读用户在配置里手动填的
         simMonitor.setNumberResolver(config::simNumber);
@@ -116,7 +116,6 @@ public class GatewayService extends Service {
 
         startForeground(NOTIF_ID, buildNotification("苹果皮网关启动中"));
         mqtt.connect();
-        udpAudio.start();
         simMonitor.start();
         callMonitor.start();
         Log.i(TAG, "all modules started");
@@ -142,6 +141,9 @@ public class GatewayService extends Service {
                     break;
                 case Protocol.T_CALL_CONTROL:
                     handleCallControl(msg);
+                    break;
+                case Protocol.T_AUDIO_CTRL:
+                    handleAudioCtrl(msg);
                     break;
                 default:
                     // 本版本不支持的指令,回 UNSUPPORTED
@@ -177,6 +179,40 @@ public class GatewayService extends Service {
             ack(msg, true, null, null);
         } else {
             ack(msg, false, err, "slot=" + slot + " to=" + to);
+        }
+    }
+
+    /**
+     * AUDIO_CTRL:{action:"start"|"stop", dir:"up"|"down"|"both", codec:"pcm16",
+     *             params:{ip:"客户端IP", port:客户端UDP端口}} → 语音桥接控制。
+     * 成功 ack data 里带回实际 codec 与 GW 的 UDP 端口。
+     */
+    private void handleAudioCtrl(Protocol.Message msg) throws JSONException {
+        JSONObject d = msg.data;
+        String action = d.getString("action");
+        if ("start".equals(action)) {
+            String dir = d.optString("dir", "both");
+            String codec = d.optString("codec", VoiceBridge.CODEC);
+            if (!VoiceBridge.CODEC.equals(codec)) {
+                ack(msg, false, "UNSUPPORTED", "codec " + codec + ", only " + VoiceBridge.CODEC);
+                return;
+            }
+            JSONObject params = d.optJSONObject("params");
+            String ip = params != null ? params.optString("ip", null) : null;
+            int port = params != null ? params.optInt("port", 0) : 0;
+            String err = voiceBridge.start(dir, ip, port);
+            if (err == null) {
+                JSONObject ok = new JSONObject();
+                try { ok.put("codec", VoiceBridge.CODEC); ok.put("port", VoiceBridge.UDP_PORT); } catch (JSONException ignored) {}
+                ackData(msg, ok);
+            } else {
+                ack(msg, false, "SEND_FAILED", err);
+            }
+        } else if ("stop".equals(action)) {
+            voiceBridge.stop();
+            ack(msg, true, null, null);
+        } else {
+            ack(msg, false, "BAD_REQUEST", "unknown action: " + action);
         }
     }
 
@@ -270,6 +306,16 @@ public class GatewayService extends Service {
         }
     }
 
+    /** ack 成功时直接带 data 的变体(如 AUDIO_CTRL 返回实际 codec/端口)。 */
+    private void ackData(Protocol.Message req, JSONObject data) {
+        try {
+            Protocol.Message ack = Protocol.envelope(Protocol.T_CMD_ACK, req.id, data);
+            mqtt.publishEvent("cmd/ack", ack);
+        } catch (Exception e) {
+            Log.w(TAG, "build ackData failed: " + e.getMessage());
+        }
+    }
+
     /** 尝试获取 ZeroTier 接口(zt*)的 IP。 */    private String getZeroTierIp() {
         try {
             Enumeration<NetworkInterface> ifs = NetworkInterface.getNetworkInterfaces();
@@ -325,9 +371,9 @@ public class GatewayService extends Service {
             mqtt.publishRetained("status", Protocol.envelope(Protocol.T_BYE, bye));
         } catch (Exception ignored) {}
         if (heartbeatExec != null) heartbeatExec.shutdownNow();
+        voiceBridge.stop();
         callMonitor.stop();
         simMonitor.stop();
-        udpAudio.stop();
         if (localSmsRelay != null) LocalBroadcastManager.getInstance(this).unregisterReceiver(localSmsRelay);
         if (smsSentReceiver != null) unregisterReceiver(smsSentReceiver);
         mqtt.clearRetained("status");

@@ -26,7 +26,7 @@ Q968 (Android 13, root)  ←─ ZeroTier(P2P) ─→  iPhone (Swift App)
 - ✅ **硬件验证** —— 证明 Q968 支持双向语音桥接,见 [VERIFICATION.md](VERIFICATION.md)
 - ✅ **阶段一** —— 通信骨架 + 短信收发
 - ✅ **阶段二** —— 来电通知/拨号/通话控制/双卡状态/配置化/保活(2026-08-17 实机端到端验证)
-- ⬜ 阶段三 —— 实时语音桥接完全体
+- 🔨 **阶段三(进行中)** —— 语音桥双工管道已打通,通话中实测待做(见下)
 
 ### 阶段二实机验证记录(2026-08-17,USB 网络 + amqtt broker)
 
@@ -39,6 +39,22 @@ Q968 (Android 13, root)  ←─ ZeroTier(P2P) ─→  iPhone (Swift App)
 | CALL_STATE active/ended(含卡槽归属、去电号码回填) | ✅ |
 | CALL_CONTROL hangup(TelecomManager.endCall) | ✅ |
 | CALL_INCOMING(真实来电) | ⏳ 待用户用另一部手机打入验证(代码路径与去电对称) |
+
+### 阶段三进展(2026-08-17)
+
+架构(App ⇄ root 特权中继):
+```
+iPhone ⇄(UDP/PCM16 16k mono)⇄ VoiceBridge(App) ⇄(localhost TCP)⇄ RootAudioRelay(root app_process)
+                                                          ├ AudioRecord(VOICE_CALL)  下行捕获
+                                                          └ AudioTrack(INCALL_MUSIC→TELEPHONY_TX) 上行注入
+```
+- signature 级权限(CAPTURE_AUDIO_OUTPUT)拿不到的解法:su 拉起 `app_process` 跑本 APK 里的
+  `RootAudioRelay`,root uid 直接过 AudioFlinger 权限校验(priv-app 挂载在本 ROM 因 FBE 数据目录问题失败)
+- Magisk su 白名单固化:deploy 脚本自动写入 `magisk.db`(重装后 uid 变化会自动更新)
+- 已验证:AUDIO_CTRL 全回路、下行 50fps 精确出流(无通话时静音,符合预期)、上行 150 帧灌入 AudioTrack
+- 待真实通话中验证:下行是否抓到人声、上行 INCALL_MUSIC 是否真的混入对方听筒
+  (FLAG_INCALL_MUSIC 反射被 hidden-API 拦截,当前兜底 0x800,若路由不对需试 0x1000 等)
+- PC 测试:`python scripts/test-client.py audio down 15` / `audio tx <wav>` / `audio stop`
 
 双卡要点:
 - 发短信/拨号指令都带 `simSlot`(0/1),按 subscriptionId → PhoneAccountHandle 精确选卡

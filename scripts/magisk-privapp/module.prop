@@ -1,0 +1,6 @@
+id=applecase_privapp
+name=AppleCase Gateway Privileged
+version=v0.1.0
+versionCode=1
+author=applecase
+description=苹果皮网关提权:以 priv-app 挂载 APK,授予 CAPTURE_AUDIO_OUTPUT/MODIFY_PHONE_STATE(VOICE_CALL 录音与通话上行注入必需)

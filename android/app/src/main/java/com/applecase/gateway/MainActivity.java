@@ -126,6 +126,7 @@ public class MainActivity extends AppCompatActivity {
         ps.add(Manifest.permission.CALL_PHONE);
         ps.add(Manifest.permission.ANSWER_PHONE_CALLS);
         ps.add(Manifest.permission.READ_CALL_LOG);
+        ps.add(Manifest.permission.RECORD_AUDIO);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             ps.add(Manifest.permission.POST_NOTIFICATIONS);
         }

@@ -43,9 +43,18 @@ echo "==== [4/4] 授权 + 启动 ===="
 "$ADB" shell "pm grant $PKG android.permission.CALL_PHONE" 2>/dev/null || true
 "$ADB" shell "pm grant $PKG android.permission.ANSWER_PHONE_CALLS" 2>/dev/null || true
 "$ADB" shell "pm grant $PKG android.permission.READ_CALL_LOG" 2>/dev/null || true
+"$ADB" shell "pm grant $PKG android.permission.RECORD_AUDIO" 2>/dev/null || true
 "$ADB" shell "pm grant $PKG android.permission.POST_NOTIFICATIONS" 2>/dev/null || true
 # 电池优化白名单(防止 Doze 杀后台)
 "$ADB" shell "dumpsys deviceidle whitelist +$PKG" 2>/dev/null || true
+
+# 语音桥 root 授权:重装后 uid 会变,更新 Magisk su 白名单(免每次弹授权框)
+APP_UID=$("$ADB" shell "dumpsys package $PKG" | grep -oE "userId=[0-9]+" | head -1 | cut -d= -f2 | tr -d '')
+if [ -n "$APP_UID" ]; then
+    "$ADB" shell "su -c 'magisk --sqlite \"DELETE FROM policies WHERE uid=$APP_UID\"'" >/dev/null 2>&1 || true
+    "$ADB" shell "su -c 'magisk --sqlite \"INSERT INTO policies (uid, policy, until, logging, notification) VALUES($APP_UID, 2, 0, 1, 1)\"'" >/dev/null 2>&1 || true
+    echo "    magisk su granted for uid=$APP_UID"
+fi
 
 # 启动 MainActivity(它会触发前台服务)
 "$ADB" shell "am start -n $PKG/.MainActivity"

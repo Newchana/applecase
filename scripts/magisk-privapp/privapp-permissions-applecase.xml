@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  priv-app 权限白名单(苹果皮网关)。
+  位置(设备):/system/etc/permissions/privapp-permissions-applecase.xml
+  作用:让 priv-app 形式安装的 com.applecase.gateway 获得两个 signature|privileged 级权限:
+    - CAPTURE_AUDIO_OUTPUT:AudioRecord 源 VOICE_CALL(下行捕获对方声音)
+    - MODIFY_PHONE_STATE:AudioTrack FLAG_INCALL_MUSIC 路由 TELEPHONY_TX(上行注入,部分 ROM 需要)
+  pm grant 对这两个权限无效("managed by role"),priv-app 是 root 设备的标准解法。
+-->
+<permissions>
+    <privapp-permissions package="com.applecase.gateway">
+        <permission name="android.permission.CAPTURE_AUDIO_OUTPUT"/>
+        <permission name="android.permission.MODIFY_PHONE_STATE"/>
+    </privapp-permissions>
+</permissions>

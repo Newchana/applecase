@@ -102,11 +102,11 @@
 | `CALL_PLACE` | CL→GW | `{to, simSlot?}` | 拨号指令,双卡选卡(阶段二 ✅) |
 | `CALL_CONTROL` | CL→GW | `{action:"answer"\|"hangup"\|"mute", on?:bool}` | 通话控制;mute 时 on 省略=true(阶段二 ✅) |
 | `SIM_STATE` | GW→CL | `{slot, state, signal, carrier}` | SIM 状态(阶段二 ✅,信号按档位变化节流上报) |
-| `AUDIO_CTRL` | CL→GW | `{action:"start"\|"stop", dir:"up"\|"down"\|"both", codec:"opus", params:{...}}` | 音频桥接控制(阶段三) |
+| `AUDIO_CTRL` | CL→GW | `{action:"start"\|"stop", dir:"up"\|"down"\|"both", codec:"pcm16", params:{ip:"客户端IP", port:客户端UDP端口}}` | 音频桥接控制(阶段三 🔨 管道已通,通话实测待做)。成功 ack data 带 `{codec, port}`(GW 的 UDP 端口)。codec 当前仅 pcm16(16k/mono/16bit,256kbps),opus 为后续优化 |
 
 > 阶段一 ✅:HELLO / HEARTBEAT / BYE / SMS_SEND / SMS_IN / SMS_OUT / CMD_ACK。
 > 阶段二 ✅:CALL_INCOMING / CALL_STATE / CALL_PLACE / CALL_CONTROL / SIM_STATE(2026-08-17 在 Q968 实机端到端验证)。
-> 阶段三:AUDIO_CTRL。
+> 阶段三 🔨:AUDIO_CTRL 管道已实机打通(下行 50fps PCM 流 + 上行注入),通话中的实际音频内容待验证。
 
 ### 4.3 阶段一消息示例
 

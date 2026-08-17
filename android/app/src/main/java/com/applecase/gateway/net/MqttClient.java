@@ -120,7 +120,7 @@ public class MqttClient implements MqttCallbackExtended {
         opts.setMqttVersion(MqttConnectOptions.MQTT_VERSION_3_1_1); // 默认 3.1("MQIsdp")部分 broker 拒收
         opts.setAutomaticReconnect(true);   // 断线后自动重连(仅对已成功连过的会话)
         opts.setCleanSession(true);
-        opts.setConnectionTimeout(15);
+        opts.setConnectionTimeout(8);       // 须小于首连重试间隔,避免"已在连接中"撞车
         opts.setKeepAliveInterval(30);
         opts.setUserName(username);
         opts.setPassword(password.toCharArray());

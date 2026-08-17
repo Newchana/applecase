@@ -28,3 +28,4 @@ Thumbs.db
 ios/Pods/
 ios/*.xcuserstate
 ios/xcuserdata/
+magisk.db/
