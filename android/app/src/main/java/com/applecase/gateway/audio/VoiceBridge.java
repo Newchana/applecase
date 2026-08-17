@@ -84,8 +84,10 @@ public class VoiceBridge {
     public synchronized String start(String dir, String clientHost, int clientPort) {
         if (running.get()) return "already running";
         wsAudio = null;
-        final boolean sendDown = dir == null || dir.contains("down");
-        final boolean recvUp = dir == null || dir.contains("up");
+        // 注意:"both" 不包含 "down"/"up" 字面,必须整体判断(踩坑:曾致 both 模式双路全哑)
+        final boolean all = dir == null || dir.equals("both");
+        final boolean sendDown = all || dir.contains("down");
+        final boolean recvUp = all || dir.contains("up");
 
         try {
             udp = new DatagramSocket(UDP_PORT);
@@ -208,12 +210,17 @@ public class VoiceBridge {
      */
     public synchronized String startWeb(String dir, NanoWSD.WebSocket ws) {
         if (running.get()) {
-            // 重启语义:上一个会话没停干净(如页面刷新)就先停再启
+            if (wsAudio == ws) {
+                return null;   // 同一客户端重复 start:幂等,直接成功
+            }
+            // 重启语义:换客户端了(上一页没停干净/新页面接手)先停再启
             Log.w(TAG, "bridge already running, restarting for new web client");
             stop();
         }
+        statTx.set(0); statRx.set(0); statNonSilent.set(0);
         wsAudio = ws;
-        final boolean sendDown = dir == null || dir.contains("down");
+        final boolean all = dir == null || dir.equals("both");
+        final boolean sendDown = all || dir.contains("down");
         try {
             tcpServer = new ServerSocket();
             tcpServer.setReuseAddress(true);

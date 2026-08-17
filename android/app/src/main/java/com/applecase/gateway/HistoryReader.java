@@ -26,7 +26,7 @@ public final class HistoryReader {
     public static JSONObject readAll(Context ctx, java.util.function.IntUnaryOperator slotResolver) {
         JSONObject out = new JSONObject();
         try { out.put("sms", readSms(ctx, slotResolver)); } catch (Exception ignored) {}
-        try { out.put("calls", readCalls(ctx)); } catch (Exception ignored) {}
+        try { out.put("calls", readCalls(ctx, slotResolver)); } catch (Exception ignored) {}
         return out;
     }
 
@@ -85,19 +85,44 @@ public final class HistoryReader {
         }
     }
 
-    /** 系统通话记录 → {slot,addr,dir,state,ts,dur}(时间倒序,最近 60 条)。 */
-    private static JSONArray readCalls(Context ctx) {
+    /** 系统通话记录 → {slot,addr,dir,state,ts,dur}(时间倒序,最近 60 条)。
+     *  带 subscription_id 查(标卡);ROM 不支持该列时降级为不带。 */
+    private static JSONArray readCalls(Context ctx, java.util.function.IntUnaryOperator slotResolver) {
         JSONArray arr = new JSONArray();
-        try (Cursor c = ctx.getContentResolver().query(
-                android.provider.CallLog.Calls.CONTENT_URI,
-                new String[]{"number", "date", "duration", "type"},
-                null, null, "date DESC")) {
-            if (c == null) return arr;
+        Cursor c = null;
+        boolean hasSub = true;
+        try {
+            c = ctx.getContentResolver().query(
+                    android.provider.CallLog.Calls.CONTENT_URI,
+                    new String[]{"number", "date", "duration", "type", "subscription_id"},
+                    null, null, "date DESC");
+        } catch (Exception e) {
+            hasSub = false;
+        }
+        if (c == null) {
+            hasSub = false;
+            try {
+                c = ctx.getContentResolver().query(
+                        android.provider.CallLog.Calls.CONTENT_URI,
+                        new String[]{"number", "date", "duration", "type"},
+                        null, null, "date DESC");
+            } catch (Exception e2) {
+                android.util.Log.w("AC.Hist", "read call_log failed: " + e2);
+                return arr;
+            }
+        }
+        try {
             while (c.moveToNext() && arr.length() < 60) {
                 String num = safe(c.getString(0));
                 long date = c.getLong(1);
                 long dur = c.getLong(2);
                 int type = c.getInt(3);
+                int slot = 0;
+                if (hasSub) {
+                    int subId = c.getInt(4);
+                    int sl = slotResolver.applyAsInt(subId);
+                    slot = sl < 0 ? 0 : sl;
+                }
                 String dir, state;
                 if (type == android.provider.CallLog.Calls.OUTGOING_TYPE) { dir = "out"; state = "ended"; }
                 else if (type == android.provider.CallLog.Calls.MISSED_TYPE) { dir = "in"; state = "missed"; }
@@ -105,10 +130,13 @@ public final class HistoryReader {
                 JSONObject e = new JSONObject();
                 e.put("addr", num.isEmpty() ? "?" : num);
                 e.put("dir", dir).put("state", state)
-                 .put("ts", date).put("dur", dur).put("slot", 0);
+                 .put("ts", date).put("dur", dur).put("slot", slot);
                 arr.put(e);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        } finally {
+            try { c.close(); } catch (Exception ignored) {}
+        }
         return arr;
     }
 
