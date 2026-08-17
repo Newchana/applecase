@@ -4,25 +4,22 @@
 > + 实时语音桥(阶段三:对着 iPhone 说话走 Q968 的卡,对方声音回 iPhone)。
 > 不是最终产品 UI,只用来验证端到端链路。
 
-## 创建步骤(Xcode)
+## 快速开始(Mac 上)
 
-1. **新建工程**:Xcode → New → Project → iOS App
-   - Product Name: `AppleCaseDebug`
-   - Interface: **SwiftUI**
-   - Language: Swift
-   - 最低版本 iOS 15
+仓库已带完整 Xcode 工程,**双击打开即可**(无需手工建工程):
 
-2. **加 CocoaMQTT 依赖**:File → Add Package Dependencies,粘贴
-   ```
-   https://github.com/emqx/CocoaMQTT
-   ```
-   勾选 `CocoaMQTT` library。
+```
+ios/AppleCaseDebug.xcodeproj      ← Mac 上双击这个
+ios/AppleCaseDebug/               ← 4 个源文件(App/GatewayClient/AudioBridge/ContentView)
+```
 
-3. **替换 `AppleCaseDebugApp.swift` 和 `ContentView.swift`** 为下面两个文件的内容。
+1. **打开工程**:Xcode 首次打开会自动解析 CocoaMQTT 依赖(SPM,已配置),联网等一分钟。
+2. **配置**:App 内右上角齿轮⚙️ 填 broker 地址 / deviceId / Q968 的 IP(配置持久化,无需改代码)。
+3. **连真机 Run**(语音桥需要真机;个人免费证书勾选 Target → Signing → Automatically manage signing,
+   首次运行后到 设置→通用→VPN与设备管理 信任开发者)。
+4. **麦克风/本地网络权限**:首次通话弹麦克风授权,允许即可(用途描述已在工程里配好)。
 
-4. **配置**:把 `ContentView.swift` 里的 `brokerHost` / `deviceId` / `presharedKey` 改成你的实际值(和 Q968 端一致)。
-
-5. Run。发条短信到 Q968 的卡,这里应该实时显示。
+> 手工建工程的老步骤(如果对工程文件有疑问)见本文件末尾附录,源码与工程内一致。
 
 ---
 
