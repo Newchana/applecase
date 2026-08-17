@@ -122,8 +122,6 @@ public class CallController {
     // ============ 本机哑巴化(苹果皮形态:声音全走 iPhone 桥) ============
 
     private boolean silenced = false;
-    private boolean armSilence = false;   // App 拨号/接听时置位:这通电话要把本机哑巴化
-    private String savedEarGain = null;   // 静音前的 EAR Gain(听筒模拟增益)
     private final android.os.Handler keeper = new android.os.Handler(android.os.Looper.getMainLooper());
     private static final long KEEPER_INTERVAL_MS = 2000;
     /** 通话期间定时重申静音(HAL 可能在路由变化时重配 mixer)。 */
@@ -135,33 +133,22 @@ public class CallController {
         }
     };
 
-    /** 标记下一通(正在建立的)通话做本机静音 —— 仅 App 发起的操作会调用。 */
-    public void armSilenceNextCall() {
-        armSilence = true;
-        Log.i(TAG, "arm silence for next call");
-    }
-
-    /** 接通时消费标志;返回是否应静音。 */
-    public boolean consumeArmSilence() {
-        boolean v = armSilence;
-        armSilence = false;
-        return v;
-    }
-
     /**
      * 通话中把 Q968 本机"哑巴化"(苹果皮形态):
-     * - 听筒/扬声器:mixer 模拟增益归零(EAR Gain=0 + Speaker/Speaker2 Mute=On,root tinymix)。
-     *   走 mixer 是因为 STREAM_VOICE_CALL 音量最小档是 1(非 0),AudioFlinger 侧永远压不到无声。
-     *   ⚠️ 实测红线:不能用 'Earpiece Mute' 开关 —— 它是路由级开关,会把整个下行通路
-     *   (含 VBC 的 VOICE_CALL 数字抽头)一起关掉,桥的下行捕获直接断流。EAR Gain 是纯模拟
-     *   PGA 增益,置 0 听筒无声但数字抽头(位于 PGA 之前)不受影响(分阶段实测验证)。
+     * - 听筒/扬声器:切断 VBC→codec 输出桥(AO Mixer AOL/AOR Switch=Off,root tinymix)。
+     *   走 mixer 是因为 STREAM_VOICE_CALL 音量最小档是 1(非 0),AudioFlinger 侧压不到无声。
+     *   ⚠️ 实测红线(分阶段验证,别再踩):
+     *     · 'Earpiece Mute'/'VBC_DL_MUTE'/'EAR Gain'/'AO Gain' 均无效或误杀 —— Earpiece Mute 与
+     *       DL_MUTE 是路由/DSP 级开关,会把 VBC 的 VOICE_CALL 数字抽头一起关掉(下行捕获断流);
+     *       EAR/AO Gain 不在当前通话输出链上(置 0 听筒照响)。
+     *     · ✅ AO Mixer 是 VBC 到 codec 的输出桥,关掉后听筒/喇叭全哑,数字抽头(位于其上游)不受影响
+     *       (实测:277 帧满速,峰值 927,内容存活)。
      * - 麦克风:setMicrophoneMute(作用于 ADC 路径,不影响 INCALL_MUSIC 的 PCM 混入上行)。
      * 下行(对方声音)由桥送 iPhone 播;上行由 iPhone 注入。
      * 幂等:重复调用安全。
      */
     public void silenceLocal() {
         if (silenced) return;
-        savedEarGain = execRoot("/system/bin/tinymix \"EAR Gain EAR Playback Volume\"");
         android.media.AudioManager am = context.getSystemService(android.media.AudioManager.class);
         try { am.setMicrophoneMute(true); } catch (Exception e) {
             Log.w(TAG, "setMicrophoneMute failed: " + e.getMessage());
@@ -174,10 +161,14 @@ public class CallController {
     }
 
     private void applyMixerMute() {
-        // 注意:不碰 'Earpiece Mute'(见方法头红线说明)
-        execRoot("/system/bin/tinymix \"EAR Gain EAR Playback Volume\" 0"
-                + ";/system/bin/tinymix \"Speaker Mute\" 1"
-                + ";/system/bin/tinymix \"Speaker2 Mute\" 1");
+        // 切断 VBC→codec 输出桥(听筒+喇叭全哑);不碰 Earpiece Mute/DL_MUTE(红线见上)
+        execRoot("/system/bin/tinymix \"AO Mixer AOL Switch\" 0"
+                + ";/system/bin/tinymix \"AO Mixer AOR Switch\" 0");
+    }
+
+    private void applyMixerRestore() {
+        execRoot("/system/bin/tinymix \"AO Mixer AOL Switch\" 1"
+                + ";/system/bin/tinymix \"AO Mixer AOR Switch\" 1");
     }
 
     /** 通话结束恢复本机声音。幂等。 */
@@ -188,18 +179,8 @@ public class CallController {
         android.media.AudioManager am = context.getSystemService(android.media.AudioManager.class);
         try { am.setMicrophoneMute(false); } catch (Exception ignored) {}
         // tinymix 查询输出形如 "233\tINT\t1\tEAR Gain EAR Playback Volume\t15",取末尾数字
-        String gain = "15";
-        if (savedEarGain != null) {
-            String t = savedEarGain.trim();
-            int sp = t.lastIndexOf(' ');
-            String cand = sp >= 0 ? t.substring(sp + 1) : t;
-            if (cand.matches("[0-9]+")) gain = cand;
-        }
-        execRoot("/system/bin/tinymix \"EAR Gain EAR Playback Volume\" " + gain
-                + ";/system/bin/tinymix \"Speaker Mute\" 0"
-                + ";/system/bin/tinymix \"Speaker2 Mute\" 0");
-        Log.i(TAG, "local restored (ear gain=" + gain + ")");
-        savedEarGain = null;
+        applyMixerRestore();
+        Log.i(TAG, "local restored (AO Mixer back on)");
     }
 
     public boolean isSilenced() { return silenced; }
