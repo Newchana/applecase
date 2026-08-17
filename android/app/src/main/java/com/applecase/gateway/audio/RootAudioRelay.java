@@ -43,7 +43,6 @@ public class RootAudioRelay {
                 + " uid=" + android.os.Process.myUid());
 
         AudioRecord recorder = null;
-        AudioTrack track = null;
         Socket sock = null;
         try {
             // ---- 下行:VOICE_CALL 捕获(root 下 CAPTURE_AUDIO_OUTPUT 校验放行) ----
@@ -57,22 +56,13 @@ public class RootAudioRelay {
                 return;
             }
 
-            // ---- 上行:INCALL_MUSIC → TELEPHONY_TX ----
-            AudioAttributes.Builder ab = new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .setFlags(incallMusicFlag());
-            AudioFormat fmt = new AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(SAMPLE_RATE)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build();
-            int minTrk = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT);
-            track = new AudioTrack(ab.build(), fmt, Math.max(minTrk, FRAME_BYTES * 8),
-                    AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE);
-            if (track.getState() != AudioTrack.STATE_INITIALIZED) {
-                Log.e(TAG, "AudioTrack UNINITIALIZED");
+            // ---- 上行:FIFO → tinyplay → ALSA FE_ST_VOICE_PCM_P(card0 dev53) ----
+            // 此 ROM 的策略引擎不给任何应用路由 INCALL_MUSIC(FLAG 全位扫描+USAGE_MEDIA 均无效,
+            // AudioFlinger Frames written 恒 0),但 VBC 的 Voice PCM Play 前端设备空闲,
+            // root 直接写 ALSA 实测可混入通话上行(440Hz 环回对比度 4x,2026-08-17)。
+            java.io.OutputStream upOut = openAlsaUplink();
+            if (upOut == null) {
+                Log.e(TAG, "ALSA uplink fifo failed");
                 return;
             }
 
@@ -83,18 +73,18 @@ public class RootAudioRelay {
             final InputStream in = sock.getInputStream();
             final OutputStream out = sock.getOutputStream();
             final AudioRecord rec = recorder;
-            final AudioTrack trk = track;
             final Socket socketRef = sock;
 
             Log.i(TAG, "connected to app, piping audio");
 
-            // 上行管道:TCP → AudioTrack
+            // 上行管道:TCP → FIFO(tinyplay 消费)
             Thread up = new Thread(() -> {
                 byte[] buf = new byte[FRAME_BYTES];
                 try {
                     int n;
                     while ((n = in.read(buf)) > 0) {
-                        trk.write(buf, 0, n, AudioTrack.WRITE_BLOCKING);
+                        upOut.write(buf, 0, n);
+                        upOut.flush();
                     }
                 } catch (Exception e) {
                     Log.i(TAG, "uplink pipe end: " + e.getMessage());
@@ -128,10 +118,93 @@ public class RootAudioRelay {
             Log.e(TAG, "relay failed: " + t);
         } finally {
             try { if (recorder != null) recorder.release(); } catch (Exception ignored) {}
-            try { if (track != null) track.release(); } catch (Exception ignored) {}
+            if (tinyplayProc != null) {
+                tinyplayProc.destroy();
+                try { Runtime.getRuntime().exec(new String[]{"sh", "-c",
+                        "pkill tinyplay; rm -f " + FIFO}).waitFor(); } catch (Exception ignored) {}
+            }
             try { if (sock != null) sock.close(); } catch (Exception ignored) {}
             Log.i(TAG, "relay exited");
         }
+    }
+
+    /** FIFO 路径与 tinyplay 进程。 */
+    private static Process tinyplayProc;
+    private static final String FIFO = "/data/local/tmp/ac_uplink.fifo";
+
+    /**
+     * 起 tinyplay 读 FIFO 灌 ALSA(card0/dev53=FE_ST_VOICE_PCM_P),返回 FIFO 写端。
+     * 先写一个"无限长"的 WAV 头,tinyplay 解析后持续把后续 PCM 写进声卡。
+     */
+    private static java.io.OutputStream openAlsaUplink() {
+        try {
+            // 1) 清掉旧 fifo;su 环境下 mkfifo 偶发 Interrupted system call,重试
+            new java.io.File(FIFO).delete();
+            for (int i = 0; i < 5; i++) {
+                try {
+                    new ProcessBuilder("mkfifo", FIFO).start().waitFor();
+                } catch (Exception ignored) {}
+                if (new java.io.File(FIFO).exists()) break;
+                Thread.sleep(150);
+            }
+            if (!new java.io.File(FIFO).exists()) {
+                Log.e(TAG, "mkfifo failed");
+                return null;
+            }
+            // 2) 直接起 tinyplay(不经 sh;读端打开会阻塞直到写端,内核配对)
+            tinyplayProc = new ProcessBuilder("/data/local/tmp/ta/tinyplay", FIFO, "-D", "0", "-d", "53")
+                    .redirectErrorStream(true).start();
+            new Thread(() -> {
+                try (java.io.BufferedReader r = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(tinyplayProc.getInputStream()))) {
+                    String l;
+                    while ((l = r.readLine()) != null) Log.i(TAG, "tinyplay: " + l);
+                } catch (Exception ignored) {}
+                Log.i(TAG, "tinyplay exited rc=" + tinyplayProc.exitValue());
+            }).start();
+            // 3) 开写端(带 5s 看门狗,防 reader 没起导致 relay 卡死)
+            final java.util.concurrent.atomic.AtomicReference<java.io.FileOutputStream> ref =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            Thread opener = new Thread(() -> {
+                try { ref.set(new java.io.FileOutputStream(FIFO)); } catch (Exception ignored) {}
+            });
+            opener.setDaemon(true);
+            opener.start();
+            opener.join(5000);
+            java.io.FileOutputStream f = ref.get();
+            if (f == null) {
+                tinyplayProc.destroy();
+                Log.e(TAG, "fifo open timeout (tinyplay not reading?)");
+                return null;
+            }
+            // WAV 头:RIFF,PCM16,16k,单声道,data 长度极大(tinyplay 读到 EOF 为止)
+            int rate = SAMPLE_RATE;
+            byte[] h = new byte[44];
+            int le = 0x0;
+            h[0]='R';h[1]='I';h[2]='F';h[3]='F';
+            putLe(h, 4, 4, 0x7FFFFFE7);           // RIFF size(偏移4,不能覆盖 RIFF 魔数)
+            h[8]='W';h[9]='A';h[10]='V';h[11]='E';
+            h[12]='f';h[13]='m';h[14]='t';h[15]=' ';
+            putLe(h, 16, 4, 16);                  // fmt chunk size
+            putLe(h, 20, 2, 1);                   // PCM
+            putLe(h, 22, 2, 1);                   // mono
+            putLe(h, 24, 4, rate);
+            putLe(h, 28, 4, rate * 2);
+            putLe(h, 32, 2, 2);
+            putLe(h, 34, 2, 16);
+            h[36]='d';h[37]='a';h[38]='t';h[39]='a';
+            putLe(h, 40, 4, 0x7FFFFFCF);          // data size(巨大)
+            f.write(h);
+            Log.i(TAG, "ALSA uplink fifo ready (tinyplay dev53)");
+            return f;
+        } catch (Exception e) {
+            Log.e(TAG, "openAlsaUplink failed: " + e);
+            return null;
+        }
+    }
+
+    private static void putLe(byte[] b, int off, int len, long v) {
+        for (int i = 0; i < len; i++) b[off + i] = (byte) ((v >> (8 * i)) & 0xFF);
     }
 
     private static void exitWhenDone(Socket s) {
