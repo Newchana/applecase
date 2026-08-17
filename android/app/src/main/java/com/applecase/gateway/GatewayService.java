@@ -83,6 +83,11 @@ public class GatewayService extends Service {
         simMonitor.setNumberResolver(config::simNumber);
         callMonitor = new CallMonitor(this, mqtt, simMonitor);
         callController = new CallController(this, simMonitor);
+        // App 发起的通话:接通即把 Q968 本机哑巴化(声音全走 iPhone 桥),结束恢复
+        callMonitor.setOnCallActive(slot -> {
+            if (callController.consumeArmSilence()) callController.silenceLocal();
+        });
+        callMonitor.setOnCallEnd(callController::restoreLocal);
 
         // 1. 注册短信发送结果 receiver(动态)
         smsSentReceiver = new SmsSentReceiver(new SmsSentReceiver.Callback() {
@@ -176,6 +181,7 @@ public class GatewayService extends Service {
         String err = callController.place(to, slot);
         if (err == null) {
             Log.i(TAG, "call placed to=" + to + " slot=" + slot);
+            callController.armSilenceNextCall();   // 接通后自动静音本机(苹果皮形态)
             ack(msg, true, null, null);
         } else {
             ack(msg, false, err, "slot=" + slot + " to=" + to);
@@ -224,6 +230,7 @@ public class GatewayService extends Service {
         switch (action) {
             case "answer":
                 err = callController.answer();
+                if (err == null) callController.armSilenceNextCall();
                 break;
             case "hangup":
                 err = callController.hangup();

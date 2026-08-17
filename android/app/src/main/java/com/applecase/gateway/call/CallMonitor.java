@@ -52,6 +52,14 @@ public class CallMonitor {
     private final SimMonitor simMonitor;
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
 
+    /** 通话接通回调(参数 slot;去电 OFFHOOK 或来电接听)。 */
+    private java.util.function.IntConsumer onCallActive;
+    /** 通话结束回调(ended/missed)。 */
+    private Runnable onCallEnd;
+
+    public void setOnCallActive(java.util.function.IntConsumer cb) { this.onCallActive = cb; }
+    public void setOnCallEnd(Runnable cb) { this.onCallEnd = cb; }
+
     private BroadcastReceiver numberReceiver;      // 只补号码
     private final Map<Integer, Object> callListeners = new HashMap<>(); // subId → 监听器
 
@@ -202,6 +210,7 @@ public class CallMonitor {
                     ctx.answered = true;
                     if (ctx.from.isEmpty()) ctx.from = freshNumber();
                     publishState(ctx, "active", "in");
+                    notifyActive(slot);
                 } else if (!ctx.answered) {
                     // 没响铃直接摘机 = 去电(本机拨号或 CALL_PLACE)
                     ctx.answered = true;
@@ -210,6 +219,7 @@ public class CallMonitor {
                     if (ctx.from.isEmpty()) maybePendingOut(ctx, slot);
                     if (ctx.callId.isEmpty()) ctx.callId = "call-" + System.currentTimeMillis();
                     publishState(ctx, "active", "out");
+                    notifyActive(slot);
                 }
                 break;
 
@@ -224,12 +234,21 @@ public class CallMonitor {
                     if (ctx.from.isEmpty()) maybePendingOut(ctx, slot);
                     String endState = (ctx.ringing && !ctx.answered) ? "missed" : "ended";
                     publishState(ctx, endState, ctx.outgoing ? "out" : "in");
+                    if (onCallEnd != null) {
+                        try { onCallEnd.run(); } catch (Exception e) { Log.w(TAG, "onCallEnd cb: " + e.getMessage()); }
+                    }
                 }
                 calls.remove(subId); // 一通电话结束,清上下文
                 break;
 
             default:
                 break;
+        }
+    }
+
+    private void notifyActive(int slot) {
+        if (onCallActive != null) {
+            try { onCallActive.accept(slot); } catch (Exception e) { Log.w(TAG, "onCallActive cb: " + e.getMessage()); }
         }
     }
 

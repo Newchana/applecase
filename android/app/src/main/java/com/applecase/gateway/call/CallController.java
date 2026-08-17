@@ -119,6 +119,65 @@ public class CallController {
         }
     }
 
+    // ============ 本机哑巴化(苹果皮形态:声音全走 iPhone 桥) ============
+
+    private boolean silenced = false;
+    private boolean armSilence = false;   // App 拨号/接听时置位:这通电话要把本机哑巴化
+    private int savedVoiceCallVolume = -1;
+
+    /** 标记下一通(正在建立的)通话做本机静音 —— 仅 App 发起的操作会调用。 */
+    public void armSilenceNextCall() {
+        armSilence = true;
+        Log.i(TAG, "arm silence for next call");
+    }
+
+    /** 接通时消费标志;返回是否应静音。 */
+    public boolean consumeArmSilence() {
+        boolean v = armSilence;
+        armSilence = false;
+        return v;
+    }
+
+    /**
+     * 通话中把 Q968 本机"哑巴化":通话扬声器音量归零 + 麦克风静音。
+     * 下行(对方声音)由 VOICE_CALL 捕获送 iPhone 播;上行由 iPhone 经 INCALL_MUSIC 注入,
+     * 麦克风静音作用于 ADC 路径,不影响 PCM 混入通路(实测验证)。
+     * 幂等:重复调用安全。
+     */
+    public void silenceLocal() {
+        if (silenced) return;
+        try {
+            android.media.AudioManager am = context.getSystemService(android.media.AudioManager.class);
+            savedVoiceCallVolume = am.getStreamVolume(android.media.AudioManager.STREAM_VOICE_CALL);
+            am.setStreamVolume(android.media.AudioManager.STREAM_VOICE_CALL, 0, 0);
+            am.setMicrophoneMute(true);
+            silenced = true;
+            Log.i(TAG, "local silenced (voice-call volume " + savedVoiceCallVolume + " -> 0, mic muted)");
+        } catch (Exception e) {
+            Log.w(TAG, "silenceLocal failed: " + e.getMessage());
+        }
+    }
+
+    /** 通话结束恢复本机声音。幂等。 */
+    public void restoreLocal() {
+        if (!silenced) return;
+        try {
+            android.media.AudioManager am = context.getSystemService(android.media.AudioManager.class);
+            am.setMicrophoneMute(false);
+            if (savedVoiceCallVolume >= 0) {
+                am.setStreamVolume(android.media.AudioManager.STREAM_VOICE_CALL,
+                        savedVoiceCallVolume, 0);
+            }
+            Log.i(TAG, "local restored (volume=" + savedVoiceCallVolume + ")");
+        } catch (Exception e) {
+            Log.w(TAG, "restoreLocal failed: " + e.getMessage());
+        }
+        silenced = false;
+        savedVoiceCallVolume = -1;
+    }
+
+    public boolean isSilenced() { return silenced; }
+
     // ============ slot → PhoneAccountHandle 映射 ============
 
     /**
