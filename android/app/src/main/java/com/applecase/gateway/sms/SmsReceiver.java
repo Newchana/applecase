@@ -63,14 +63,16 @@ public class SmsReceiver extends BroadcastReceiver {
         Log.i(TAG, "SMS from=" + sender + " slot=" + slot + " body=" +
                 (body.length() > 40 ? body.substring(0, 40) + "..." : body));
 
-        // 转交 GatewayService 处理(用 LocalBroadcast 避免跨进程,发到同一 app 内)
+        // 转交 GatewayService(必须走 LocalBroadcastManager 总线 —— GatewayService 在
+        // LocalBroadcastManager 上注册;用 context.sendBroadcast 是两条不同的总线,
+        // 收不到!阶段一遗留 bug,2026-08-17 入信实测定位)
         Intent local = new Intent(ACTION_SMS_RECEIVED);
-        local.setPackage(context.getPackageName());
         local.putExtra(EXTRA_SLOT, slot);
         local.putExtra(EXTRA_FROM, sender);
         local.putExtra(EXTRA_BODY, body.toString());
         local.putExtra(EXTRA_TIMESTAMP, timestamp > 0 ? timestamp : System.currentTimeMillis());
-        context.sendBroadcast(local);
+        androidx.localbroadcastmanager.content.LocalBroadcastManager
+                .getInstance(context).sendBroadcast(local);
     }
 
     private SmsMessage parseMessage(byte[] pdu, String format) {

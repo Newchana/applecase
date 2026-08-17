@@ -40,12 +40,12 @@ body{background:var(--bg);color:var(--ink);
 #num::placeholder{color:#c2c2c8;font-size:22px;letter-spacing:0}
 #del{border:0;background:transparent;padding:8px;cursor:pointer;color:var(--sub);flex:none}
 #del:active{opacity:.4}
-.keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px 14px;max-width:340px;margin:6px auto 2px}
-.key{border:0;background:var(--card);border-radius:50%;aspect-ratio:1.45/1;max-height:76px;cursor:pointer;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;transition:transform .06s}
-.key:active{transform:scale(.94);background:var(--dark-fill)}
-.key b{font-size:29px;font-weight:400;line-height:1}
-.key span{font-size:10px;letter-spacing:2px;color:var(--sub);text-transform:uppercase;height:12px}
+.keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px 16px;max-width:328px;margin:8px auto 0}
+.key{border:0;background:var(--card);border-radius:18px;height:clamp(52px,7.6vh,68px);cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;transition:transform .06s}
+.key:active{transform:scale(.95);background:var(--dark-fill)}
+.key b{font-size:26px;font-weight:400;line-height:1.15;font-variant-numeric:tabular-nums}
+.key span{font-size:9px;letter-spacing:1.6px;color:var(--sub);text-transform:uppercase;height:11px;line-height:11px}
 #callBtn{border:0;background:var(--green);width:74px;height:74px;border-radius:50%;cursor:pointer;
   display:flex;align-items:center;justify-content:center;margin:14px auto 0;box-shadow:0 6px 18px rgba(52,199,89,.35);transition:transform .06s}
 #callBtn:active{transform:scale(.94)}
@@ -83,6 +83,36 @@ body{background:var(--bg);color:var(--ink);
 .bub.out{background:var(--blue);color:#fff;align-self:flex-end;border-bottom-right-radius:5px}
 .bub small{display:block;font-size:10px;opacity:.55;margin-top:3px}
 .day-sep{text-align:center;font-size:11px;color:var(--sub);margin:6px 0}
+
+/* 会话列表行 */
+.conv{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+.conv:active{background:#f6f6f9}
+.conv:last-child{border-bottom:0}
+.avatar{flex:none;width:42px;height:42px;border-radius:50%;background:var(--fill);
+  display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600;color:var(--sub)}
+.conv .mid{flex:1;min-width:0}
+.conv .mid b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.conv .mid span{display:block;font-size:13px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.conv .rt{text-align:right;flex:none}
+.conv .rt em{font-style:normal;font-size:11px;color:var(--sub);display:block}
+.conv .rt i{font-style:normal;font-size:11px;color:var(--blue)}
+.textBtn{border:0;background:transparent;color:var(--blue);font-size:15px;cursor:pointer;padding:6px 4px}
+
+/* 聊天层 */
+#chat{position:fixed;inset:0;z-index:40;background:var(--bg);display:none;flex-direction:column}
+#chat.on{display:flex}
+.chat-top{display:flex;align-items:center;gap:4px;padding:10px 10px 8px;background:rgba(255,255,255,.92);
+  backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.chat-top button{border:0;background:transparent;color:var(--blue);padding:6px;cursor:pointer}
+.chat-title{flex:1;text-align:center;font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-body{flex:1;overflow-y:auto;padding:12px 16px;display:flex}
+.chat-body .thread{width:100%;margin:0}
+.chat-input{padding:8px 12px calc(10px + env(safe-area-inset-bottom));background:rgba(255,255,255,.94);
+  backdrop-filter:blur(14px);border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.chat-input input{border:0;background:var(--bg);border-radius:10px;padding:9px 12px;font:15px/1.4 inherit;outline:0;min-width:0}
+#sbody{grid-column:1/3}
+.chat-input .seg{grid-column:1/2;margin:0}
+#sendBtn{grid-column:2/3;border:0;background:var(--blue);color:#fff;font:600 14px/1 inherit;border-radius:10px;cursor:pointer}
 
 /* 状态页 */
 .card{background:var(--card);border-radius:14px;padding:14px 16px;margin:10px 0}
@@ -161,20 +191,30 @@ nav button:active svg{transform:scale(.92)}
     <div class="list" id="callList"><div class="empty">暂无通话</div></div>
   </section>
 
-  <!-- 短信 -->
+  <!-- 短信:会话列表 -->
   <section class="view" id="v-sms">
-    <div class="top"><h1>短信</h1></div>
-    <div class="composer">
-      <input id="sto" placeholder="收件人号码" inputmode="tel">
-      <textarea id="sbody" placeholder="短信内容"></textarea>
-      <div class="sendRow">
-        <div class="seg" id="smsSeg"></div>
-        <button id="sendBtn">发送</button>
-      </div>
-    </div>
-    <div class="sec-title"><span>全部消息</span><button id="clearSms">清除</button></div>
-    <div class="thread" id="msgs"><div class="empty">暂无消息</div></div>
+    <div class="top"><h1>短信</h1>
+      <button class="textBtn" id="newSms">新建</button></div>
+    <div class="list" id="convList"><div class="empty">暂无会话</div></div>
   </section>
+
+  <!-- 短信:聊天层(覆盖) -->
+  <div id="chat">
+    <div class="chat-top">
+      <button id="chatBack" aria-label="返回">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="14 5 7 12 14 19"/></svg>
+      </button>
+      <div class="chat-title" id="chatTitle">新短信</div>
+      <span style="width:34px"></span>
+    </div>
+    <div class="chat-body"><div class="thread" id="msgs"></div></div>
+    <div class="chat-input">
+      <input id="sto" placeholder="收件人号码" inputmode="tel">
+      <input id="sbody" placeholder="短信内容">
+      <div class="seg" id="smsSeg"></div>
+      <button id="sendBtn">发送</button>
+    </div>
+  </div>
 
   <!-- 状态 -->
   <section class="view" id="v-info">
@@ -262,9 +302,10 @@ function handle(m){
     case 'HISTORY':
       callsHist=d.calls||[];smsHist=d.sms||[];
       renderCallList();renderMsgs();break;
+    case 'HEARTBEAT':break;
     case 'SMS_IN':
       smsHist.push({dir:'in',slot:d.slot,addr:d.from,body:d.body,ts:d.ts});
-      renderMsgs();break;
+      if(chatAddr!==null)renderMsgs();else renderConvList();break;
     case 'SMS_OUT':
       toast('已'+(d.status==='delivered'?'送达':d.status==='sent'?'发出':'失败'));break;
     case 'CALL_INCOMING':
@@ -281,9 +322,6 @@ function handle(m){
       if(st==='active'){stopRing();startAudio()}
       if(st==='ended'||st==='missed'){
         stopRing();stopAudio();
-        callsHist.unshift({dir:active.dir,slot:active.slot,addr:active.from,state:st,
-          ts:Date.now(),dur:0});
-        renderCallList();
         setTimeout(()=>{if(active&&active.state!=='ringing'&&active.state!=='active'){active=null;showCall()}},1500);
       }
       break}
@@ -332,17 +370,53 @@ function renderCallList(){
 }
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
-/* ---------- 渲染:短信 ---------- */
+/* ---------- 渲染:短信(会话列表 + 聊天) ---------- */
+function normAddr(a){return String(a||'').replace(/[^0-9]/g,'').replace(/^86(?=1\d)/,'')}
+let chatAddr=null; // null=未开聊天层
+function convs(){
+  const m=new Map();
+  for(const s of smsHist){
+    const k=normAddr(s.addr)||'?';
+    if(!m.has(k))m.set(k,{addr:s.addr||'?',items:[],last:s,unread:0});
+    m.get(k).items.push(s);
+    if(s.ts>(m.get(k).last?.ts||0))m.get(k).last=s;
+  }
+  return [...m.values()].sort((a,b)=>b.last.ts-a.last.ts);
+}
+function renderConvList(){
+  const el=$('#convList');
+  const cs=convs();
+  if(!cs.length){el.innerHTML='<div class="empty">暂无会话</div>';return}
+  el.innerHTML=cs.map(c=>{
+    const a=normAddr(c.addr)||'?';
+    const av=esc(a.slice(-2)).padStart(2,'·');
+    return '<div class="conv" data-a="'+esc(c.addr)+'">'
+      +'<div class="avatar">'+av+'</div>'
+      +'<div class="mid"><b>'+esc(c.addr)+'</b><span>'+esc(c.last.body)+'</span></div>'
+      +'<div class="rt"><em>'+fmtTs(c.last.ts)+'</em><i>'+c.items.length+' 条</i></div></div>'}).join('');
+  $$('#convList .conv').forEach(d=>d.onclick=()=>openChat(d.dataset.a));
+}
 function renderMsgs(){
   const el=$('#msgs');
-  if(!smsHist.length){el.innerHTML='<div class="empty">暂无消息</div>';return}
-  el.innerHTML=smsHist.slice(-60).map(s=>{
-    const t=new Date(s.ts);
-    return '<div class="bub '+s.dir+'">'+esc(s.body)
-      +'<small>'+esc(s.addr)+' · 卡'+(s.slot??0)+' · '+fmtTs(s.ts)+'</small></div>'}).join('');
-  // 滚到底部(仅短信页可见时)
-  if($('#v-sms').classList.contains('on'))el.scrollIntoView({block:'end'});
+  if(!chatAddr){renderConvList();return}
+  const k=normAddr(chatAddr);
+  const items=smsHist.filter(s=>(normAddr(s.addr)||'?')===k);
+  if(!items.length){el.innerHTML='<div class="empty" style="margin:auto">没有消息</div>';return}
+  el.innerHTML=items.map(s=>
+    '<div class="bub '+s.dir+'">'+esc(s.body)
+    +'<small>'+fmtTs(s.ts)+' · 卡'+(s.slot??0)+'</small></div>').join('');
+  const body=$('.chat-body');if(body)body.scrollTop=body.scrollHeight;
 }
+function openChat(addr){
+  chatAddr=addr;
+  $('#sto').value=addr==='?'?'':addr;
+  $('#chatTitle').textContent=addr==='?'?'新短信':addr;
+  $('#chat').classList.add('on');
+  renderMsgs();
+}
+function closeChat(){chatAddr=null;$('#chat').classList.remove('on');renderConvList()}
+$('#chatBack').onclick=closeChat;
+$('#newSms').onclick=()=>openChat('');
 
 /* ---------- 拨号键盘 ---------- */
 const KEYS=[['1',''],['2','abc'],['3','def'],['4','ghi'],['5','jkl'],['6','mno'],
@@ -373,15 +447,17 @@ $('#sendBtn').onclick=()=>{
   smsHist.push({dir:'out',slot:smsSlot,addr:to,body:b,ts:Date.now()});
   $('#sbody').value='';renderMsgs();
 };
-$('#clearCalls').onclick=()=>{callsHist=[];renderCallList()};
-$('#clearSms').onclick=()=>{smsHist=[];renderMsgs()};
 
 /* ---------- 标签切换 ---------- */
 $$('nav button').forEach(b=>b.onclick=()=>{
   $$('nav button').forEach(x=>x.classList.toggle('sel',x===b));
   $$('.view').forEach(v=>v.classList.remove('on'));
   $('#v-'+b.dataset.v).classList.add('on');
-  if(b.dataset.v==='sms')renderMsgs();
+  if(b.dataset.v==='sms'){sendCmd('GET_STATE',{});renderConvList()}
+});
+// 通话中来短信等事件时,若不在短信页只更新角标数据
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden&&connected)sendCmd('GET_STATE',{});
 });
 
 /* ---------- 通话全屏 ---------- */
@@ -565,6 +641,7 @@ window.addEventListener('beforeunload',()=>{
 $('#iConn').textContent=(window.isSecureContext?'HTTPS':'HTTP')+' · '+(MIC_OK?'麦克风可用':'无麦克风');
 
 /* ---------- 启动 ---------- */
+renderConvList();
 connectCtrl();
 </script>
 </body>

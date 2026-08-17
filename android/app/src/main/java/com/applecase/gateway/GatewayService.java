@@ -177,10 +177,14 @@ public class GatewayService extends Service {
                     handleAudioCtrl(msg);
                     break;
                 case "GET_STATE":
-                    // Web 客户端上线/刷新:当前状态 + 历史记录(离线期间来信/来电)
+                    // Web 客户端上线/刷新:当前状态 + 完整历史(系统短信库/通话记录 + 网关自记出信)
                     publishHello(this.deviceId);
                     try {
-                        Protocol.Message h = Protocol.envelope(Protocol.T_HISTORY, HistoryStore.read(this));
+                        Protocol.Message h = Protocol.envelope(Protocol.T_HISTORY,
+                                HistoryReader.readAll(this, subId -> {
+                                    int slot = simMonitor.slotForSubId(subId);
+                                    return slot < 0 ? 0 : slot;
+                                }));
                         webHub.broadcast(h);
                     } catch (Exception e) {
                         Log.w(TAG, "broadcast history failed: " + e.getMessage());
