@@ -44,6 +44,9 @@ public class MqttClient implements MqttCallbackExtended {
     private volatile boolean connected = false;
     private Consumer<Protocol.Message> messageHandler;
     private Runnable onConnectCallback;
+    /** 首连重试器:Paho 的 automaticReconnect 只在首次连接成功后才生效, 首连失败需要自己兜底重试。 */
+    private java.util.concurrent.ScheduledExecutorService firstConnectRetry;
+    private volatile boolean closed = false;
 
     public MqttClient(String deviceId, String brokerHost, int brokerPort,
                       String username, String password) {
@@ -72,27 +75,57 @@ public class MqttClient implements MqttCallbackExtended {
             client = new MqttAsyncClient(uri, clientId, new MemoryPersistence());
             client.setCallback(this);
 
-            MqttConnectOptions opts = new MqttConnectOptions();
-            opts.setAutomaticReconnect(true);   // 自动重连
-            opts.setCleanSession(true);
-            opts.setConnectionTimeout(15);
-            opts.setKeepAliveInterval(30);
-            opts.setUserName(username);
-            opts.setPassword(password.toCharArray());
-            opts.setMaxInflight(20);
-
-            client.connect(opts, null, new IMqttActionListener() {
+            client.connect(opts(), null, new IMqttActionListener() {
                 @Override public void onSuccess(IMqttToken asyncActionToken) {
                     Log.i(TAG, "connected to " + uri);
                 }
                 @Override public void onFailure(IMqttToken asyncActionToken, Throwable e) {
-                    Log.w(TAG, "connect failed: " + e.getMessage());
+                    Log.w(TAG, "connect failed: " + e.getMessage() + " (will retry)");
                     connected = false;
+                    scheduleFirstConnectRetry();
                 }
             });
         } catch (MqttException e) {
             Log.e(TAG, "connect setup failed: " + e.getMessage());
+            scheduleFirstConnectRetry();
         }
+    }
+
+    /** 首连失败后的兜底重试:每 10s 一次,连上或 close 后停。 */
+    private void scheduleFirstConnectRetry() {
+        if (firstConnectRetry != null || closed) return;
+        firstConnectRetry = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+        firstConnectRetry.scheduleWithFixedDelay(() -> {
+            if (closed || connected || client == null) {
+                if (firstConnectRetry != null) firstConnectRetry.shutdown();
+                firstConnectRetry = null;
+                return;
+            }
+            try {
+                Log.i(TAG, "retrying first connect...");
+                client.connect(opts(), null, new IMqttActionListener() {
+                    @Override public void onSuccess(IMqttToken t) { /* connectComplete 回调接手 */ }
+                    @Override public void onFailure(IMqttToken t, Throwable e) {
+                        Log.w(TAG, "retry connect failed: " + e.getMessage());
+                    }
+                });
+            } catch (Exception e) {
+                Log.w(TAG, "retry connect error: " + e.getMessage());
+            }
+        }, 10, 10, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    private MqttConnectOptions opts() {
+        MqttConnectOptions opts = new MqttConnectOptions();
+        opts.setMqttVersion(MqttConnectOptions.MQTT_VERSION_3_1_1); // 默认 3.1("MQIsdp")部分 broker 拒收
+        opts.setAutomaticReconnect(true);   // 断线后自动重连(仅对已成功连过的会话)
+        opts.setCleanSession(true);
+        opts.setConnectionTimeout(15);
+        opts.setKeepAliveInterval(30);
+        opts.setUserName(username);
+        opts.setPassword(password.toCharArray());
+        opts.setMaxInflight(20);
+        return opts;
     }
 
     // ============ MqttCallbackExtended ============
@@ -136,7 +169,9 @@ public class MqttClient implements MqttCallbackExtended {
     // ============ 订阅 ============
 
     private void subscribeCommands() {
-        String filter = base + "cmd/#";
+        // 注意:必须精确订阅 "cmd" 主题,不能用 "cmd/#" 通配 ——
+        // 否则自己发布的 cmd/ack 会被自己收到,形成 UNSUPPORTED 回执死循环(实测踩坑)。
+        String filter = base + "cmd";
         try {
             client.subscribe(filter, 1, new IMqttMessageListener() {
                 @Override public void messageArrived(String topic, MqttMessage message) {
@@ -188,6 +223,11 @@ public class MqttClient implements MqttCallbackExtended {
 
     public void disconnect() {
         connected = false;
+        closed = true;
+        if (firstConnectRetry != null) {
+            firstConnectRetry.shutdownNow();
+            firstConnectRetry = null;
+        }
         if (client != null) {
             try {
                 if (client.isConnected()) client.disconnectForcibly(2000);

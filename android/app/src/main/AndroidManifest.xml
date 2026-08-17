@@ -15,12 +15,18 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
-    <!-- 来电监听用 PhoneStateReceiver,阶段二启用 -->
+    <!-- 来电监听用 PHONE_STATE 广播,阶段二启用 -->
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+    <!-- 通话静音(CALL_CONTROL mute) -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- ===== 前台服务 + 通知(Android 13 通知权限) ===== -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- ===== 保活(阶段二) ===== -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- ===== 开机自启(阶段二,Magisk service.sh 兜底) ===== -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />

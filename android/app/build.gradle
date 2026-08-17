@@ -11,8 +11,8 @@ android {
         // Q968 是 Android 13 (API 33),最低支持设 29 充分使用 CallScreeningService
         minSdk 29
         targetSdk 33  // 对齐设备,避免 targetSdk 34 引入的前台服务类型强制要求
-        versionCode 1
-        versionName "0.1.0"
+        versionCode 2
+        versionName "0.2.0"
 
         // deviceId 默认值,可在运行时覆盖。构建时可通过 -PdeviceId=xxx 注入
         buildConfigField "String", "DEFAULT_DEVICE_ID", "\"Q968-default\""

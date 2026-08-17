@@ -1,0 +1,9 @@
+listeners:
+  default:
+    type: tcp
+    bind: 0.0.0.0:1883
+sys_interval: 20
+auth:
+  allow_anonymous: false
+  password-file: mqtt_test.passwd
+timeout_disconnect_delay: 5

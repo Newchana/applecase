@@ -17,14 +17,16 @@ import android.util.Log;
 import androidx.core.app.NotificationCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
+import com.applecase.gateway.call.CallController;
+import com.applecase.gateway.call.CallMonitor;
 import com.applecase.gateway.net.MqttClient;
 import com.applecase.gateway.net.Protocol;
 import com.applecase.gateway.net.UdpAudioSocket;
+import com.applecase.gateway.sim.SimMonitor;
 import com.applecase.gateway.sms.SmsReceiver;
 import com.applecase.gateway.sms.SmsSentReceiver;
 import com.applecase.gateway.sms.SmsSender;
 
-import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -36,10 +38,10 @@ import java.util.function.Consumer;
 /**
  * 网关主服务。前台服务,持有:
  * - MqttClient:指令/事件通道
- * - UdpAudioSocket:音频通道占位
- * - SmsSender:发短信
- * - SmsSentReceiver:动态注册,捕获发送结果
- * - LocalSmsRelay:接收 SmsReceiver 转来的本地短信事件,转为 MQTT SMS_IN 推送
+ * - UdpAudioSocket:音频通道占位(阶段三填实)
+ * - SmsSender / SmsSentReceiver / LocalSmsRelay:短信收发链路
+ * - SimMonitor:双卡状态/信号(阶段二)
+ * - CallMonitor / CallController:来电监听、拨号与通话控制(阶段二)
  *
  * 生命周期:onCreate 建各模块并连 MQTT;onDestroy 反注册并断连。
  */
@@ -49,15 +51,13 @@ public class GatewayService extends Service {
     private static final String CHANNEL_ID = "gateway_service";
     private static final int NOTIF_ID = 1;
 
-    // 配置(骨架期硬编码,阶段二改为从 SharedPreferences/资源读取)
-    private static final String BROKER_HOST = "10.147.17.1";   // ← 改成你的 broker ZeroTier IP
-    private static final int BROKER_PORT = 1883;
-    private static final String MQTT_USER = "applecase";
-    private static final String MQTT_PASS = "change-me";
-
     private MqttClient mqtt;
     private SmsSender smsSender;
     private UdpAudioSocket udpAudio;
+    private SimMonitor simMonitor;
+    private CallMonitor callMonitor;
+    private CallController callController;
+    private Config config;
 
     // 动态注册的 receivers(需在 onDestroy 反注册)
     private BroadcastReceiver smsSentReceiver;
@@ -70,12 +70,19 @@ public class GatewayService extends Service {
         super.onCreate();
         Log.i(TAG, "GatewayService onCreate");
 
-        String deviceId = resolveDeviceId();
+        config = new Config(this);
+        String deviceId = config.deviceId();
         Protocol.setPresharedKey(BuildConfig.PRESHARED_KEY);
 
-        mqtt = new MqttClient(deviceId, BROKER_HOST, BROKER_PORT, MQTT_USER, MQTT_PASS);
+        mqtt = new MqttClient(deviceId, config.brokerHost(), config.brokerPort(),
+                config.mqttUser(), config.mqttPass());
         smsSender = new SmsSender(this, mqtt);
         udpAudio = new UdpAudioSocket(UdpAudioSocket.DEFAULT_PORT);
+        simMonitor = new SimMonitor(this, mqtt);
+        // 本机号码:卡上多不存 MSISDN,读用户在配置里手动填的
+        simMonitor.setNumberResolver(config::simNumber);
+        callMonitor = new CallMonitor(this, mqtt, simMonitor);
+        callController = new CallController(this, simMonitor);
 
         // 1. 注册短信发送结果 receiver(动态)
         smsSentReceiver = new SmsSentReceiver(new SmsSentReceiver.Callback() {
@@ -110,19 +117,34 @@ public class GatewayService extends Service {
         startForeground(NOTIF_ID, buildNotification("苹果皮网关启动中"));
         mqtt.connect();
         udpAudio.start();
+        simMonitor.start();
+        callMonitor.start();
         Log.i(TAG, "all modules started");
     }
 
     /** 处理来自客户端的指令(SMS_SEND / CALL_* / AUDIO_CTRL)。 */
     private void handleCommand(Protocol.Message msg) {
         Log.i(TAG, "cmd received: " + msg);
+        // 防线:GW→CL 方向的事件类消息不是指令,静默忽略(防回环,不该出现在 cmd 主题上)
+        if (Protocol.T_CMD_ACK.equals(msg.type) || Protocol.T_SMS_OUT.equals(msg.type)
+                || Protocol.T_SMS_IN.equals(msg.type) || Protocol.T_HELLO.equals(msg.type)
+                || Protocol.T_HEARTBEAT.equals(msg.type) || Protocol.T_BYE.equals(msg.type)) {
+            Log.w(TAG, "event-type message on cmd topic, ignore: " + msg.type);
+            return;
+        }
         try {
             switch (msg.type) {
                 case Protocol.T_SMS_SEND:
                     handleSmsSend(msg);
                     break;
+                case Protocol.T_CALL_PLACE:
+                    handleCallPlace(msg);
+                    break;
+                case Protocol.T_CALL_CONTROL:
+                    handleCallControl(msg);
+                    break;
                 default:
-                    // 阶段一不支持的指令,回 UNSUPPORTED
+                    // 本版本不支持的指令,回 UNSUPPORTED
                     ack(msg, false, "UNSUPPORTED", null);
                     Log.w(TAG, "unsupported cmd type: " + msg.type);
             }
@@ -136,10 +158,49 @@ public class GatewayService extends Service {
         JSONObject d = msg.data;
         String to = d.getString("to");
         String body = d.getString("body");
-        int slot = d.optInt("simSlot", 0);
+        int slot = d.optInt("simSlot", config.defaultSimSlot());
         smsSender.send(to, body, slot, msg.id);
         // 立即回 ack 表示已受理,实际结果走 SMS_OUT
         ack(msg, true, null, null);
+    }
+
+    /** CALL_PLACE:{to, simSlot?} → 用指定卡拨号。 */
+    private void handleCallPlace(Protocol.Message msg) throws JSONException {
+        JSONObject d = msg.data;
+        String to = d.getString("to");
+        int slot = d.optInt("simSlot", config.defaultSimSlot());
+        // 先记录去电号码(广播不一定带),再拨
+        callMonitor.noteOutgoing(to, slot);
+        String err = callController.place(to, slot);
+        if (err == null) {
+            Log.i(TAG, "call placed to=" + to + " slot=" + slot);
+            ack(msg, true, null, null);
+        } else {
+            ack(msg, false, err, "slot=" + slot + " to=" + to);
+        }
+    }
+
+    /** CALL_CONTROL:{action:"answer"|"hangup"|"mute", on?} → 通话控制。 */
+    private void handleCallControl(Protocol.Message msg) throws JSONException {
+        JSONObject d = msg.data;
+        String action = d.getString("action");
+        String err;
+        switch (action) {
+            case "answer":
+                err = callController.answer();
+                break;
+            case "hangup":
+                err = callController.hangup();
+                break;
+            case "mute":
+                err = callController.mute(d.optBoolean("on", true));
+                break;
+            default:
+                ack(msg, false, "BAD_REQUEST", "unknown action: " + action);
+                return;
+        }
+        if (err == null) ack(msg, true, null, null);
+        else ack(msg, false, err, action);
     }
 
     /** 收到 SmsReceiver 转发的短信,封装成 SMS_IN 发布。 */
@@ -167,9 +228,8 @@ public class GatewayService extends Service {
             data.put("deviceId", deviceId);
             data.put("fw", BuildConfig.VERSION_NAME);
             data.put("ip", getZeroTierIp());
-            JSONArray sims = new JSONArray();
-            // 骨架期:简单填两张卡占位,阶段二从 TelephonyManager 读真实状态
-            data.put("sims", sims);
+            // 阶段二:真实双卡状态(卡槽/运营商/状态/信号档位)
+            data.put("sims", simMonitor.getSimsJson());
             Protocol.Message hello = Protocol.envelope(Protocol.T_HELLO, data);
             mqtt.publishRetained("status", hello);
             Log.i(TAG, "HELLO published (retained)");
@@ -210,17 +270,7 @@ public class GatewayService extends Service {
         }
     }
 
-    private String resolveDeviceId() {
-        // 优先用 Build.SERIAL 或 ANDROID_ID;骨架期兜底用固定值
-        try {
-            String s = android.os.Build.SERIAL;
-            if (s != null && !s.isEmpty() && !"unknown".equals(s)) return "Q968-" + s;
-        } catch (Exception ignored) {}
-        return BuildConfig.DEFAULT_DEVICE_ID;
-    }
-
-    /** 尝试获取 ZeroTier 接口(zt*)的 IP。 */
-    private String getZeroTierIp() {
+    /** 尝试获取 ZeroTier 接口(zt*)的 IP。 */    private String getZeroTierIp() {
         try {
             Enumeration<NetworkInterface> ifs = NetworkInterface.getNetworkInterfaces();
             while (ifs.hasMoreElements()) {
@@ -268,11 +318,20 @@ public class GatewayService extends Service {
     @Override
     public void onDestroy() {
         Log.i(TAG, "GatewayService onDestroy");
+        // 优雅下线:BYE + 清 retained 状态,客户端立刻感知离线
+        try {
+            JSONObject bye = new JSONObject();
+            bye.put("reason", "service destroyed");
+            mqtt.publishRetained("status", Protocol.envelope(Protocol.T_BYE, bye));
+        } catch (Exception ignored) {}
         if (heartbeatExec != null) heartbeatExec.shutdownNow();
+        callMonitor.stop();
+        simMonitor.stop();
         udpAudio.stop();
         if (localSmsRelay != null) LocalBroadcastManager.getInstance(this).unregisterReceiver(localSmsRelay);
         if (smsSentReceiver != null) unregisterReceiver(smsSentReceiver);
-        if (mqtt != null) mqtt.disconnect();
+        mqtt.clearRetained("status");
+        mqtt.disconnect();
         super.onDestroy();
     }
 

@@ -1,6 +1,6 @@
-# iPhone 调试客户端(阶段一)
+# iPhone 调试客户端(阶段一/二)
 
-> 阶段一最小验证客户端:连 broker、显示收到的短信、能发"发短信"指令。
+> 最小验证客户端:连 broker、收发短信(阶段一)+ 来电显示/双卡拨号/通话控制(阶段二)。
 > 不是最终产品 UI,只用来验证端到端链路。
 
 ## 创建步骤(Xcode)
@@ -46,22 +46,41 @@ struct AppleCaseDebugApp: App {
 import SwiftUI
 import CocoaMQTT
 
-struct SmsMessage: Identifiable, Codable {
+struct SmsMessage: Identifiable {
     let id: String
     let from: String
     let body: String
     let ts: Double
 }
 
+struct CallEntry: Identifiable {
+    let id = UUID()
+    let callId: String
+    let from: String
+    let slot: Int
+    let dir: String
+    var state: String   // ringing | active | ended | missed
+}
+
+struct SimInfo {
+    let slot: Int
+    let carrier: String
+    let state: String
+    let signal: Int
+    let number: String
+}
+
 class GatewayClient: ObservableObject {
     @Published var messages: [SmsMessage] = []
+    @Published var calls: [CallEntry] = []
+    @Published var sims: [SimInfo] = []
     @Published var connected = false
     @Published var statusText = "未连接"
 
     // ===== 配置(改成你的实际值) =====
     let brokerHost = "10.147.17.1"      // broker 的 ZeroTier IP
     let brokerPort: UInt16 = 1883
-    let deviceId = "Q968-default"        // 与 Q968 端 resolveDeviceId() 一致
+    let deviceId = "Q968-default"        // 与 Q968 端配置一致
     let username = "applecase"
     let password = "change-me"
     let presharedKey = "dev-secret-change-me"  // 与 Q968 BuildConfig.PRESHARED_KEY 一致
@@ -89,22 +108,36 @@ class GatewayClient: ObservableObject {
         statusText = ok ? "连接中..." : "连接失败"
     }
 
-    func sendSms(to: String, body: String) {
-        // 发 SMS_SEND 指令到 applecase/{deviceId}/cmd
+    private func publishCommand(_ type: String, data: [String: Any]) -> String {
         let msgId = "ios-" + UUID().uuidString.prefix(8)
         let payload: [String: Any] = [
             "v": 1,
             "id": msgId,
-            "type": "SMS_SEND",
+            "type": type,
             "ts": Int(Date().timeIntervalSince1970 * 1000),
             "token": token,
-            "data": ["to": to, "body": body, "simSlot": 0]
+            "data": data
         ]
-        guard let json = try? JSONSerialization.data(withJSONObject: payload),
-              let jsonStr = String(data: json, encoding: .utf8) else { return }
-        let topic = "applecase/\(deviceId)/cmd"
-        mqtt?.publish(topic, withString: jsonStr, qos: .qos1)
-        statusText = "已发送发短信指令: \(msgId)"
+        if let json = try? JSONSerialization.data(withJSONObject: payload),
+           let jsonStr = String(data: json, encoding: .utf8) {
+            mqtt?.publish("applecase/\(deviceId)/cmd", withString: jsonStr, qos: .qos1)
+        }
+        return msgId
+    }
+
+    func sendSms(to: String, body: String, slot: Int) {
+        let ref = publishCommand("SMS_SEND", data: ["to": to, "body": body, "simSlot": slot])
+        statusText = "已发 SMS_SEND: \(ref)"
+    }
+
+    func placeCall(to: String, slot: Int) {
+        let ref = publishCommand("CALL_PLACE", data: ["to": to, "simSlot": slot])
+        statusText = "已发 CALL_PLACE(\(slot)号卡): \(ref)"
+    }
+
+    func callControl(_ action: String, on: Bool = true) {
+        let ref = publishCommand("CALL_CONTROL", data: ["action": action, "on": on])
+        statusText = "已发 CALL_CONTROL \(action): \(ref)"
     }
 }
 
@@ -115,7 +148,6 @@ extension GatewayClient: CocoaMQTTDelegate {
                 self.connected = true
                 self.statusText = "已连接"
             }
-            // 订阅短信事件 + 回执
             mqtt.subscribe("applecase/\(deviceId)/event/#", qos: .qos1)
             mqtt.subscribe("applecase/\(deviceId)/cmd/ack", qos: .qos1)
             mqtt.subscribe("applecase/\(deviceId)/status", qos: .qos1)
@@ -130,27 +162,82 @@ extension GatewayClient: CocoaMQTTDelegate {
         let type = obj["type"] as? String ?? ""
         let msgData = obj["data"] as? [String: Any] ?? [:]
 
-        if type == "SMS_IN" {
+        switch type {
+        case "SMS_IN":
             let sms = SmsMessage(
                 id: msgData["id"] as? String ?? UUID().uuidString,
                 from: msgData["from"] as? String ?? "?",
                 body: msgData["body"] as? String ?? "",
                 ts: msgData["ts"] as? Double ?? 0
             )
-            DispatchQueue.main.async {
-                self.messages.insert(sms, at: 0)
-            }
-        } else if type == "SMS_OUT" {
+            DispatchQueue.main.async { self.messages.insert(sms, at: 0) }
+
+        case "SMS_OUT":
             let status = msgData["status"] as? String ?? "?"
             let ref = msgData["ref"] as? String ?? ""
             DispatchQueue.main.async {
-                self.statusText = "短信发送结果: \(status) (ref=\(ref.prefix(8)))"
+                self.statusText = "短信结果: \(status) (ref=\(ref.prefix(8)))"
             }
-        } else if type == "HELLO" {
+
+        case "HELLO":
+            var parsed: [SimInfo] = []
+            if let arr = msgData["sims"] as? [[String: Any]] {
+                for s in arr {
+                    parsed.append(SimInfo(
+                        slot: s["slot"] as? Int ?? 0,
+                        carrier: s["carrier"] as? String ?? "?",
+                        state: s["state"] as? String ?? "?",
+                        signal: s["signal"] as? Int ?? -1,
+                        number: s["number"] as? String ?? ""
+                    ))
+                }
+            }
             let ip = msgData["ip"] as? String ?? "?"
             DispatchQueue.main.async {
+                self.sims = parsed
                 self.statusText = "网关在线 IP=\(ip)"
             }
+
+        case "CALL_INCOMING":
+            let call = CallEntry(
+                callId: msgData["id"] as? String ?? UUID().uuidString,
+                from: msgData["from"] as? String ?? "?",
+                slot: msgData["slot"] as? Int ?? 0,
+                dir: "in",
+                state: "ringing"
+            )
+            DispatchQueue.main.async { self.calls.insert(call, at: 0) }
+
+        case "CALL_STATE":
+            let callId = msgData["ref"] as? String ?? ""
+            let state = msgData["state"] as? String ?? "?"
+            let from = msgData["from"] as? String ?? "?"
+            let slot = msgData["slot"] as? Int ?? 0
+            let dir = msgData["dir"] as? String ?? "in"
+            DispatchQueue.main.async {
+                if let idx = self.calls.firstIndex(where: { $0.callId == callId }) {
+                    self.calls[idx].state = state
+                    if self.calls[idx].from == "?" { self.calls[idx].from = from }
+                } else {
+                    self.calls.insert(CallEntry(callId: callId, from: from, slot: slot, dir: dir, state: state), at: 0)
+                }
+            }
+
+        case "SIM_STATE":
+            let slot = msgData["slot"] as? Int ?? 0
+            let level = msgData["signal"] as? Int ?? -1
+            let carrier = msgData["carrier"] as? String ?? ""
+            DispatchQueue.main.async {
+                if let idx = self.sims.firstIndex(where: { $0.slot == slot }) {
+                    self.sims[idx] = SimInfo(slot: slot, carrier: carrier,
+                                             state: self.sims[idx].state, signal: level,
+                                             number: self.sims[idx].number)
+                }
+                self.statusText = "卡\(slot) 信号\(level) \(carrier)"
+            }
+
+        default:
+            break
         }
     }
 
@@ -171,6 +258,13 @@ struct ContentView: View {
     @StateObject private var client = GatewayClient()
     @State private var sendTo = ""
     @State private var sendBody = ""
+    @State private var callTo = ""
+    @State private var smsSlot = 0
+    @State private var callSlot = 0
+
+    var activeCall: CallEntry? {
+        client.calls.first { $0.state == "ringing" || $0.state == "active" }
+    }
 
     var body: some View {
         NavigationView {
@@ -181,6 +275,54 @@ struct ContentView: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(client.connected ? .green : .blue)
+
+                    // 双卡状态(阶段二)
+                    ForEach(client.sims, id: \.slot) { sim in
+                        HStack {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                            Text("卡\(sim.slot) \(sim.carrier)")
+                                .font(.subheadline)
+                            Spacer()
+                            Text("\(sim.state) 信号\(sim.signal)")
+                                .font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                }
+
+                // 来电/通话中(阶段二)
+                if let call = activeCall {
+                    Section(header: Text(call.state == "ringing" ? "📞 来电响铃" : "☎️ 通话中")) {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(call.from).font(.headline)
+                                Text("卡\(call.slot) · \(call.dir == "out" ? "去电" : "来电")")
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            if call.state == "ringing" {
+                                Button("接听") { client.callControl("answer") }
+                                    .buttonStyle(.borderedProminent).tint(.green)
+                            }
+                            Button("挂断") { client.callControl("hangup") }
+                                .buttonStyle(.bordered).tint(.red)
+                        }
+                    }
+                }
+
+                Section(header: Text("拨号测试(双卡选卡)")) {
+                    TextField("号码 +86...", text: $callTo)
+                        .textFieldStyle(.roundedBorder)
+                        .keyboardType(.phonePad)
+                    Picker("用哪张卡", selection: $callSlot) {
+                        Text("卡0").tag(0)
+                        Text("卡1").tag(1)
+                    }
+                    .pickerStyle(.segmented)
+                    Button("拨出") {
+                        guard !callTo.isEmpty else { return }
+                        client.placeCall(to: callTo, slot: callSlot)
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
 
                 Section(header: Text("发短信测试")) {
@@ -189,11 +331,30 @@ struct ContentView: View {
                         .keyboardType(.phonePad)
                     TextField("短信内容", text: $sendBody)
                         .textFieldStyle(.roundedBorder)
+                    Picker("用哪张卡", selection: $smsSlot) {
+                        Text("卡0").tag(0)
+                        Text("卡1").tag(1)
+                    }
+                    .pickerStyle(.segmented)
                     Button("发送") {
                         guard !sendTo.isEmpty, !sendBody.isEmpty else { return }
-                        client.sendSms(to: sendTo, body: sendBody)
+                        client.sendSms(to: sendTo, body: sendBody, slot: smsSlot)
                     }
                     .buttonStyle(.borderedProminent)
+                }
+
+                Section(header: Text("通话记录")) {
+                    ForEach(client.calls) { c in
+                        HStack {
+                            Image(systemName: c.dir == "out" ? "phone.arrow.up.right" : "phone.arrow.down.left")
+                                .foregroundColor(colorFor(c.state))
+                            VStack(alignment: .leading) {
+                                Text(c.from).font(.headline)
+                                Text("卡\(c.slot) · \(stateText(c.state))")
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                    }
                 }
 
                 Section(header: Text("收到的短信")) {
@@ -208,6 +369,25 @@ struct ContentView: View {
             .navigationTitle("苹果皮调试")
         }
     }
+
+    private func stateText(_ s: String) -> String {
+        switch s {
+        case "ringing": return "响铃中"
+        case "active": return "通话中"
+        case "ended": return "已结束"
+        case "missed": return "未接"
+        default: return s
+        }
+    }
+
+    private func colorFor(_ s: String) -> Color {
+        switch s {
+        case "ringing": return .blue
+        case "active": return .green
+        case "missed": return .red
+        default: return .secondary
+        }
+    }
 }
 ```
 
@@ -215,9 +395,16 @@ struct ContentView: View {
 
 部署 Q968 + 启动 broker 后,用这个客户端验证:
 
+阶段一(短信):
 - [ ] 打开 App,点"连接",状态变"已连接"或"网关在线 IP=..."
 - [ ] 用另一部手机发短信到 Q968 的卡 → 这里几秒内显示该短信
-- [ ] 在"发短信测试"里填号码+内容点发送 → Q968 那张卡真实发出一条短信 → 状态显示"sent"
+- [ ] 在"发短信测试"里选卡、填号码+内容点发送 → 对应卡真实发出 → 状态显示"sent/delivered"
 - [ ] 杀掉 App 重开,retained 的 status 消息还能读到网关状态
 
-四项全过 = 阶段一通信骨架端到端打通。
+阶段二(电话/状态):
+- [ ] 双卡状态条显示两张卡的运营商/信号
+- [ ] 用另一部手机打电话到 Q968 → "📞 来电响铃"显示号码和卡槽 → 点"接听"真接通 → 点"挂断"挂断
+- [ ] 不接等响完 → 通话记录显示"未接"
+- [ ] 在"拨号测试"选卡1 → 拨出 → Q968 从卡1真实拨出 → 记录显示"去电"
+
+全部通过 = 阶段二端到端打通。

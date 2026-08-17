@@ -42,8 +42,11 @@
 
 | Topic | 方向 | 说明 |
 |---|---|---|
-| `applecase/{deviceId}/cmd` | CL→GW | 客户端下发的指令(发短信、拨号等)。 |
+| `applecase/{deviceId}/cmd` | CL→GW | 客户端下发的指令(发短信、拨号等)。**精确主题**,不带通配。 |
 | `applecase/{deviceId}/cmd/ack` | GW→CL | 指令回执。用 `ref`(对应原指令的 id)关联。 |
+
+> ⚠️ 实现红线:GW 订阅指令必须用精确的 `cmd`,**不能**用 `cmd/#` 通配 ——
+> 否则 GW 自己发布的 `cmd/ack` 会被自己收到,形成 UNSUPPORTED 回执死循环(实测踩坑)。
 
 ### 3.3 事件(GW→CL 主动上报)
 
@@ -87,21 +90,23 @@
 
 | type | 方向 | data 字段 | 说明 |
 |---|---|---|---|
-| `HELLO` | GW→CL (retained) | `{deviceId, fw, sims:[{slot,id,carrier,state,signal}], ip}` | 网关上线广播自身能力 |
+| `HELLO` | GW→CL (retained) | `{deviceId, fw, sims:[{slot,id,carrier,state,signal,number}], ip}` | 网关上线广播自身能力。number 为手动配置的本机号(国内 SIM 多不写 MSISDN,AT 也读不到,故人工填) |
 | `HEARTBEAT` | GW→CL | `{uptime}` | 心跳 |
 | `BYE` | GW→CL | `{reason}` | 网关主动下线(优雅关闭) |
-| `SMS_SEND` | CL→GW | `{to:"+86...", body:"...", simSlot?:0|1}` | 发短信指令 |
+| `SMS_SEND` | CL→GW | `{to:"+86...", body:"...", simSlot?:0\|1}` | 发短信指令(双卡选卡) |
 | `SMS_IN` | GW→CL | `{id, slot, from, body, ts}` | 收到新短信(短信中心时间戳) |
 | `SMS_OUT` | GW→CL | `{ref, status:"sent"\|"delivered"\|"failed", error?}` | 发送结果回执,ref=原 SMS_SEND 的 id |
 | `CMD_ACK` | GW→CL | `{ref, ok:true\|false, error?}` | 通用指令回执(短信之外的) |
-| `CALL_INCOMING` | GW→CL | `{id, slot, from, ts}` | 来电响铃(阶段二) |
-| `CALL_STATE` | GW→CL | `{ref, state:"ringing"\|"active"\|"ended"\|"missed"}` | 通话状态(阶段二) |
-| `CALL_PLACE` | CL→GW | `{to, simSlot?}` | 拨号指令(阶段二) |
-| `CALL_CONTROL` | CL→GW | `{action:"answer"\|"hangup"\|"mute"}` | 通话控制(阶段二) |
-| `SIM_STATE` | GW→CL | `{slot, state, signal, carrier}` | SIM 状态(阶段二) |
+| `CALL_INCOMING` | GW→CL | `{id, slot, from, ts}` | 来电响铃(阶段二 ✅) |
+| `CALL_STATE` | GW→CL | `{ref, state:"ringing"\|"active"\|"ended"\|"missed", slot, from, dir:"in"\|"out"}` | 通话状态(阶段二 ✅)。ref=callId(去电时非原指令 id);slot/from/dir 为附加字段 |
+| `CALL_PLACE` | CL→GW | `{to, simSlot?}` | 拨号指令,双卡选卡(阶段二 ✅) |
+| `CALL_CONTROL` | CL→GW | `{action:"answer"\|"hangup"\|"mute", on?:bool}` | 通话控制;mute 时 on 省略=true(阶段二 ✅) |
+| `SIM_STATE` | GW→CL | `{slot, state, signal, carrier}` | SIM 状态(阶段二 ✅,信号按档位变化节流上报) |
 | `AUDIO_CTRL` | CL→GW | `{action:"start"\|"stop", dir:"up"\|"down"\|"both", codec:"opus", params:{...}}` | 音频桥接控制(阶段三) |
 
-> 阶段一仅实现:HELLO / HEARTBEAT / BYE / SMS_SEND / SMS_IN / SMS_OUT / CMD_ACK。其余类型此处先定义占位,后续阶段填实。
+> 阶段一 ✅:HELLO / HEARTBEAT / BYE / SMS_SEND / SMS_IN / SMS_OUT / CMD_ACK。
+> 阶段二 ✅:CALL_INCOMING / CALL_STATE / CALL_PLACE / CALL_CONTROL / SIM_STATE(2026-08-17 在 Q968 实机端到端验证)。
+> 阶段三:AUDIO_CTRL。
 
 ### 4.3 阶段一消息示例
 
