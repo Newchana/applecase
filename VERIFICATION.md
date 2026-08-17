@@ -98,9 +98,15 @@ I/O handle: 37; 0x10000 (AUDIO_OUTPUT_FLAG_INCALL_MUSIC)
 - 通话扫描脚本：`/data/local/tmp/scan_call.sh`
 - 节点探测脚本：`/data/local/tmp/call_probe.sh`
 
-## 待端到端实测（开发阶段做）
+## 端到端实测结果
 
-1. `AudioRecord(VOICE_CALL)` 通话时能否抓到非空下行数据
-2. `AudioTrack(INCALL_MUSIC)` 播放时对方能否听到
-3. 上下行延迟实测（目标 <300ms 单端到端）
-4. AEC（回声消除）效果验证
+1. ✅ `AudioRecord(VOICE_CALL)` 通话中抓到真实下行数据 —— 2026-08-17,拨 10086 通话中,
+   经 root 中继(RootAudioRelay)抓取:30s 共 1770 帧,峰值电平 3126/32768,19% 非静默帧
+   (与机器人断续说话吻合);空闲时纯静音(无假数据)
+2. ✅ `AudioTrack(INCALL_MUSIC)` 上行路由确认 —— AudioAttributes flag 0x800(FLAG_INCALL_MUSIC,
+   hidden API 反射被拦,兜底值正确)在通话中创建 `AUDIO_OUTPUT_FLAG_INCALL_MUSIC` 输出并路由
+   `AUDIO_DEVICE_OUT_TELEPHONY_TX`(dumpsys 实证);通话中灌入 3s/150 帧正弦波正常写入。
+   "对方听到混入音频"的最终主观确认需双端人工测试(robot 无法确认)
+3. ⬜ 上下行延迟实测（目标 <300ms 单端到端）—— 管道为 20ms 帧 + UDP 直发,理论低;
+   待 iPhone 端接入后实测
+4. ⬜ AEC（回声消除）效果验证 —— iPhone 侧用 AVAudioEngine 的 voiceChat 模式自带 AEC

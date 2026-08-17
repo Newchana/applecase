@@ -26,7 +26,7 @@ Q968 (Android 13, root)  ←─ ZeroTier(P2P) ─→  iPhone (Swift App)
 - ✅ **硬件验证** —— 证明 Q968 支持双向语音桥接,见 [VERIFICATION.md](VERIFICATION.md)
 - ✅ **阶段一** —— 通信骨架 + 短信收发
 - ✅ **阶段二** —— 来电通知/拨号/通话控制/双卡状态/配置化/保活(2026-08-17 实机端到端验证)
-- 🔨 **阶段三(进行中)** —— 语音桥双工管道已打通,通话中实测待做(见下)
+- ✅ **阶段三核心(2026-08-17)** —— 语音桥双向实机验证通过(通话中下行抓到人声、上行 INCALL_MUSIC 路由确认);剩余:iPhone 端音频 UI、延迟/AEC 调优
 
 ### 阶段二实机验证记录(2026-08-17,USB 网络 + amqtt broker)
 
@@ -51,9 +51,11 @@ iPhone ⇄(UDP/PCM16 16k mono)⇄ VoiceBridge(App) ⇄(localhost TCP)⇄ RootAud
 - signature 级权限(CAPTURE_AUDIO_OUTPUT)拿不到的解法:su 拉起 `app_process` 跑本 APK 里的
   `RootAudioRelay`,root uid 直接过 AudioFlinger 权限校验(priv-app 挂载在本 ROM 因 FBE 数据目录问题失败)
 - Magisk su 白名单固化:deploy 脚本自动写入 `magisk.db`(重装后 uid 变化会自动更新)
-- 已验证:AUDIO_CTRL 全回路、下行 50fps 精确出流(无通话时静音,符合预期)、上行 150 帧灌入 AudioTrack
-- 待真实通话中验证:下行是否抓到人声、上行 INCALL_MUSIC 是否真的混入对方听筒
-  (FLAG_INCALL_MUSIC 反射被 hidden-API 拦截,当前兜底 0x800,若路由不对需试 0x1000 等)
+- 已验证(含真实通话,拨 10086):
+  - AUDIO_CTRL 全回路;空闲时下行纯静音、50fps 精确出流
+  - **通话中下行抓到人声**(1770 帧/峰值 3126/19% 非静默,与机器人说话吻合)
+  - **上行 INCALL_MUSIC 路由确认**(flag 兜底值 0x800 正确 → AUDIO_OUTPUT_FLAG_INCALL_MUSIC → TELEPHONY_TX,
+    通话中 3s 正弦波 150 帧正常写入;"对方听到"待人工双端确认)
 - PC 测试:`python scripts/test-client.py audio down 15` / `audio tx <wav>` / `audio stop`
 
 双卡要点:
