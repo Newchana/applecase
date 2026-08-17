@@ -123,7 +123,17 @@ public class CallController {
 
     private boolean silenced = false;
     private boolean armSilence = false;   // App 拨号/接听时置位:这通电话要把本机哑巴化
-    private int savedVoiceCallVolume = -1;
+    private String savedEarGain = null;   // 静音前的 EAR Gain(听筒模拟增益)
+    private final android.os.Handler keeper = new android.os.Handler(android.os.Looper.getMainLooper());
+    private static final long KEEPER_INTERVAL_MS = 2000;
+    /** 通话期间定时重申静音(HAL 可能在路由变化时重配 mixer)。 */
+    private final Runnable keeperTask = new Runnable() {
+        @Override public void run() {
+            if (!silenced) return;
+            applyMixerMute();
+            keeper.postDelayed(this, KEEPER_INTERVAL_MS);
+        }
+    };
 
     /** 标记下一通(正在建立的)通话做本机静音 —— 仅 App 发起的操作会调用。 */
     public void armSilenceNextCall() {
@@ -139,44 +149,76 @@ public class CallController {
     }
 
     /**
-     * 通话中把 Q968 本机"哑巴化":通话扬声器音量归零 + 麦克风静音。
-     * 下行(对方声音)由 VOICE_CALL 捕获送 iPhone 播;上行由 iPhone 经 INCALL_MUSIC 注入,
-     * 麦克风静音作用于 ADC 路径,不影响 PCM 混入通路(实测验证)。
+     * 通话中把 Q968 本机"哑巴化"(苹果皮形态):
+     * - 听筒/扬声器:mixer 模拟增益归零(EAR Gain=0 + Speaker/Speaker2 Mute=On,root tinymix)。
+     *   走 mixer 是因为 STREAM_VOICE_CALL 音量最小档是 1(非 0),AudioFlinger 侧永远压不到无声。
+     *   ⚠️ 实测红线:不能用 'Earpiece Mute' 开关 —— 它是路由级开关,会把整个下行通路
+     *   (含 VBC 的 VOICE_CALL 数字抽头)一起关掉,桥的下行捕获直接断流。EAR Gain 是纯模拟
+     *   PGA 增益,置 0 听筒无声但数字抽头(位于 PGA 之前)不受影响(分阶段实测验证)。
+     * - 麦克风:setMicrophoneMute(作用于 ADC 路径,不影响 INCALL_MUSIC 的 PCM 混入上行)。
+     * 下行(对方声音)由桥送 iPhone 播;上行由 iPhone 注入。
      * 幂等:重复调用安全。
      */
     public void silenceLocal() {
         if (silenced) return;
-        try {
-            android.media.AudioManager am = context.getSystemService(android.media.AudioManager.class);
-            savedVoiceCallVolume = am.getStreamVolume(android.media.AudioManager.STREAM_VOICE_CALL);
-            am.setStreamVolume(android.media.AudioManager.STREAM_VOICE_CALL, 0, 0);
-            am.setMicrophoneMute(true);
-            silenced = true;
-            Log.i(TAG, "local silenced (voice-call volume " + savedVoiceCallVolume + " -> 0, mic muted)");
-        } catch (Exception e) {
-            Log.w(TAG, "silenceLocal failed: " + e.getMessage());
+        savedEarGain = execRoot("/system/bin/tinymix \"EAR Gain EAR Playback Volume\"");
+        android.media.AudioManager am = context.getSystemService(android.media.AudioManager.class);
+        try { am.setMicrophoneMute(true); } catch (Exception e) {
+            Log.w(TAG, "setMicrophoneMute failed: " + e.getMessage());
         }
+        applyMixerMute();
+        silenced = true;
+        keeper.removeCallbacks(keeperTask);
+        keeper.postDelayed(keeperTask, KEEPER_INTERVAL_MS);
+        Log.i(TAG, "local silenced (earpiece/speaker mixer mute + mic mute)");
+    }
+
+    private void applyMixerMute() {
+        // 注意:不碰 'Earpiece Mute'(见方法头红线说明)
+        execRoot("/system/bin/tinymix \"EAR Gain EAR Playback Volume\" 0"
+                + ";/system/bin/tinymix \"Speaker Mute\" 1"
+                + ";/system/bin/tinymix \"Speaker2 Mute\" 1");
     }
 
     /** 通话结束恢复本机声音。幂等。 */
     public void restoreLocal() {
         if (!silenced) return;
-        try {
-            android.media.AudioManager am = context.getSystemService(android.media.AudioManager.class);
-            am.setMicrophoneMute(false);
-            if (savedVoiceCallVolume >= 0) {
-                am.setStreamVolume(android.media.AudioManager.STREAM_VOICE_CALL,
-                        savedVoiceCallVolume, 0);
-            }
-            Log.i(TAG, "local restored (volume=" + savedVoiceCallVolume + ")");
-        } catch (Exception e) {
-            Log.w(TAG, "restoreLocal failed: " + e.getMessage());
-        }
         silenced = false;
-        savedVoiceCallVolume = -1;
+        keeper.removeCallbacks(keeperTask);
+        android.media.AudioManager am = context.getSystemService(android.media.AudioManager.class);
+        try { am.setMicrophoneMute(false); } catch (Exception ignored) {}
+        // tinymix 查询输出形如 "233\tINT\t1\tEAR Gain EAR Playback Volume\t15",取末尾数字
+        String gain = "15";
+        if (savedEarGain != null) {
+            String t = savedEarGain.trim();
+            int sp = t.lastIndexOf(' ');
+            String cand = sp >= 0 ? t.substring(sp + 1) : t;
+            if (cand.matches("[0-9]+")) gain = cand;
+        }
+        execRoot("/system/bin/tinymix \"EAR Gain EAR Playback Volume\" " + gain
+                + ";/system/bin/tinymix \"Speaker Mute\" 0"
+                + ";/system/bin/tinymix \"Speaker2 Mute\" 0");
+        Log.i(TAG, "local restored (ear gain=" + gain + ")");
+        savedEarGain = null;
     }
 
     public boolean isSilenced() { return silenced; }
+
+    /** su 执行 shell 命令,返回 stdout(root mixer 操作)。失败返回 null。 */
+    private String execRoot(String cmd) {
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[2048];
+            int n;
+            while ((n = p.getInputStream().read(buf)) > 0) out.write(buf, 0, n);
+            p.waitFor();
+            return out.toString().trim();
+        } catch (Exception e) {
+            Log.w(TAG, "execRoot failed: " + e.getMessage());
+            return null;
+        }
+    }
 
     // ============ slot → PhoneAccountHandle 映射 ============
 
