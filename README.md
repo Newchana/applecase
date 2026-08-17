@@ -26,7 +26,8 @@ Q968 (Android 13, root)  ←─ ZeroTier(P2P) ─→  iPhone (Swift App)
 - ✅ **硬件验证** —— 证明 Q968 支持双向语音桥接,见 [VERIFICATION.md](VERIFICATION.md)
 - ✅ **阶段一** —— 通信骨架 + 短信收发
 - ✅ **阶段二** —— 来电通知/拨号/通话控制/双卡状态/配置化/保活(2026-08-17 实机端到端验证)
-- ✅ **阶段三核心(2026-08-17)** —— 语音桥双向实机验证通过(通话中下行抓到人声、上行 INCALL_MUSIC 路由确认);剩余:iPhone 端音频 UI、延迟/AEC 调优
+- ✅ **阶段三核心(2026-08-17)** —— 语音桥双向实机验证通过(通话中下行抓到人声、上行 INCALL_MUSIC 路由确认)
+- ✅ **阶段四(2026-08-17)** —— **Web 客户端**:Q968 内嵌 Web 服务,浏览器直接打电话/收发短信/语音对讲,**不依赖 broker 和 iPhone**(iOS 路线保留可用)
 
 ### 阶段二实机验证记录(2026-08-17,USB 网络 + amqtt broker)
 
@@ -80,7 +81,25 @@ applecase/
 └── README.md               本文件
 ```
 
-## 快速开始(阶段二:短信 + 电话)
+## 快速开始(推荐:Web 客户端)
+
+**最简路线 —— 不需要 broker、不需要 iPhone、不需要 ZeroTier(同一局域网内)**:
+
+1. 部署 Q968 端:`./scripts/deploy-android.sh`(自动授权;语音桥需 root,脚本已配 Magisk 白名单)
+2. 手机/电脑浏览器打开:`http://<Q968的IP>:8080`(USB 网络就是 192.168.22.x 那个;日常用装 ZeroTier 后的 zt IP)
+3. 直接用:双卡状态、选卡拨号(接通自动开语音桥,Q968 自动静音)、接听/挂断、收发短信(实时收到入信)
+
+页面即 `android/app/src/main/assets/web/index.html`(单文件,无框架)。
+自动化回归:`python scripts/webtest.py <设备IP>`(页面/状态/拨号/音频帧/挂断全链路)。
+
+架构:Q968 内嵌 NanoWSD(HTTP+WebSocket)——
+- `GET /` 页面;`WS /ws` 控制(JSON,信封同 MQTT 协议,免 token);`WS /audio` 音频(二进制,帧格式同 UDP)
+- 所有事件经 WebMqttClient 双路扇出(MQTT + Web),MQTT 挂了 Web 照用
+- 浏览器不能发裸 UDP → 音频走 WebSocket(实测 ~50fps 双向,LAN/ZeroTier 延迟可接受)
+- 踩坑已修:NanoHTTPD socket 读超时 5s 会踢空闲 WS → 服务端 2.5s ping 保活;
+  WS 断开即停桥释放中继;重复 start 为重启语义(页面刷新场景)
+
+## 快速开始(阶段二路线:MQTT + iOS/PC 客户端)
 
 ### 准备
 

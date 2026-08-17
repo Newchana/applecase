@@ -156,7 +156,19 @@
 
 > 骨架期 UdpAudioSocket 先实现收发空包 + 统计,验证 ZeroTier UDP 打通。真实音频在阶段三接入。
 
-## 6. 错误码
+## 6. Web 通道(阶段四,与 MQTT 平行的另一种客户端接入)
+
+Q968 网关内嵌 Web 服务(:8080,NanoWSD),浏览器直连,不经过 broker:
+
+| 通道 | 说明 |
+|---|---|
+| `GET /` | 单页客户端(assets/web/index.html) |
+| `WS /ws` | 控制:JSON 信封与 4.1 完全一致,免 token(局域网/ZeroTier 信任域);新增 `GET_STATE` 类型(拉当前状态,回 HELLO);服务端推全部事件(同 MQTT 事件) |
+| `WS /audio` | 音频:二进制帧,格式同第 5 节 UDP 帧(8 字节头+PCM16);`AUDIO_CTRL.start` 的 `data.params` 用 `{ws:true}` 指定走本通道(浏览器不能发裸 UDP) |
+
+服务端每 2.5s 发 WebSocket ping 保活(NanoHTTPD 读超时 5s,否则空闲连接会被踢)。
+
+## 7. 错误码
 
 回执 data.error 用以下错误码字符串:
 
@@ -169,7 +181,7 @@
 | `BUSY` | 设备忙(如正在通话中无法发短信) |
 | `UNSUPPORTED` | 消息类型本版本不支持 |
 
-## 7. 版本演进
+## 8. 版本演进
 
 - `v` 字段做版本协商。GW 收到 `v` 高于自身的消息,回 `CMD_ACK{ok:false, error:"UNSUPPORTED"}`。
 - 新增 type 不破坏旧客户端(旧端收到未知 type 直接忽略 + 记日志,不报错)。

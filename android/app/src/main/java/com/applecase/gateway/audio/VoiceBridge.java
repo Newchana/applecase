@@ -3,6 +3,8 @@ package com.applecase.gateway.audio;
 import android.content.Context;
 import android.util.Log;
 
+import fi.iki.elonen.NanoWSD;
+
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.DatagramPacket;
@@ -56,6 +58,10 @@ public class VoiceBridge {
     /** 客户端音频地址:AUDIO_CTRL 指定,或从首个上行包自学。 */
     private volatile InetSocketAddress remote;
 
+    // Web 模式(浏览器不能发裸 UDP,音频走 WebSocket)
+    private volatile NanoWSD.WebSocket wsAudio;
+    private volatile java.io.OutputStream relayOut;
+
     private final AtomicLong downSeq = new AtomicLong();
     private final AtomicLong statRx = new AtomicLong();
     private final AtomicLong statTx = new AtomicLong();
@@ -77,6 +83,7 @@ public class VoiceBridge {
      */
     public synchronized String start(String dir, String clientHost, int clientPort) {
         if (running.get()) return "already running";
+        wsAudio = null;
         final boolean sendDown = dir == null || dir.contains("down");
         final boolean recvUp = dir == null || dir.contains("up");
 
@@ -119,6 +126,7 @@ public class VoiceBridge {
         try {
             relayIn = relaySock.getInputStream();
             relayOut = relaySock.getOutputStream();
+            this.relayOut = relayOut;
         } catch (Exception e) {
             cleanup();
             return "relay streams: " + e.getMessage();
@@ -193,6 +201,89 @@ public class VoiceBridge {
                 + " nonSilent=" + statNonSilent.get());
     }
 
+    /**
+     * Web 客户端版启动:音频走 WebSocket(浏览器不能发裸 UDP)。
+     * 下行:中继 → buildFrame → ws.send;上行:WebServer 收帧 → feedUplink 写中继。
+     * 帧格式与 UDP 版一致(8 字节头 + PCM16),便于未来统一。
+     */
+    public synchronized String startWeb(String dir, NanoWSD.WebSocket ws) {
+        if (running.get()) {
+            // 重启语义:上一个会话没停干净(如页面刷新)就先停再启
+            Log.w(TAG, "bridge already running, restarting for new web client");
+            stop();
+        }
+        wsAudio = ws;
+        final boolean sendDown = dir == null || dir.contains("down");
+        try {
+            tcpServer = new ServerSocket();
+            tcpServer.setReuseAddress(true);
+            tcpServer.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), LOCAL_TCP_PORT), 1);
+        } catch (Exception e) {
+            cleanup();
+            return "bind tcp " + LOCAL_TCP_PORT + " failed: " + e.getMessage();
+        }
+        String err = spawnRelay();
+        if (err != null) { cleanup(); return err; }
+        try {
+            tcpServer.setSoTimeout(15_000);
+            relaySock = tcpServer.accept();
+            relaySock.setTcpNoDelay(true);
+        } catch (Exception e) {
+            cleanup();
+            return "relay connect timeout: " + e.getMessage();
+        }
+        running.set(true);
+        final InputStream relayIn;
+        final OutputStream relayOut;
+        try {
+            relayIn = relaySock.getInputStream();
+            relayOut = relaySock.getOutputStream();
+            this.relayOut = relayOut;
+        } catch (Exception e) {
+            cleanup();
+            return "relay streams: " + e.getMessage();
+        }
+        if (sendDown) {
+            capThread = new Thread(() -> {
+                byte[] pcm = new byte[FRAME_BYTES];
+                try {
+                    int n;
+                    while (running.get() && (n = relayIn.read(pcm)) > 0) {
+                        if (!sendFrameWs(pcm, n)) {
+                            // WS 已断(浏览器关页/刷新):彻底停桥,释放中继与录音资源
+                            Log.w(TAG, "audio ws closed, stopping web bridge");
+                            stop();
+                            break;
+                        }
+                        countSilence(pcm, n);
+                        maybeLogStats();
+                    }
+                } catch (Exception e) {
+                    if (running.get()) Log.w(TAG, "ws downlink pipe end: " + e.getMessage());
+                }
+            }, "voice-ws-down");
+            capThread.setDaemon(true);
+            capThread.start();
+        }
+        Log.i(TAG, "bridge started (web) dir=" + dir);
+        return null;
+    }
+
+    /** Web 上行:音频 WS 帧(带 8 字节头)→ 校验后写中继(→ AudioTrack 注入通话)。 */
+    public void feedUplink(byte[] frame) {
+        if (!running.get() || frame == null || frame.length <= 8) return;
+        if ((frame[0] >> 4 & 0x0F) != HDR_VER || (frame[0] & 0x0F) != DIR_UP) return;
+        java.io.OutputStream out = relayOut;
+        if (out == null) return;
+        try {
+            out.write(frame, 8, frame.length - 8);
+            statRx.incrementAndGet();
+            maybeLogStats();
+        } catch (Exception e) {
+            Log.w(TAG, "feedUplink: " + e.getMessage());
+        }
+    }
+
     private void cleanup() {
         running.set(false);
         closeQuietly(relaySock); relaySock = null;
@@ -202,6 +293,8 @@ public class VoiceBridge {
         rxThread = null;
         capThread = null;
         remote = null;
+        wsAudio = null;
+        relayOut = null;
     }
 
     /** su 拉起 RootAudioRelay(app_process + 本 APK 做类路径)。 */
@@ -236,7 +329,7 @@ public class VoiceBridge {
 
     // ============ 帧封装与统计 ============
 
-    private void sendFrame(byte[] pcm, int len, InetSocketAddress to) {
+    private byte[] buildFrame(byte[] pcm, int len) {
         long seq = downSeq.getAndIncrement();
         ByteBuffer bb = ByteBuffer.allocate(8 + len);
         bb.put((byte) ((HDR_VER << 4) | DIR_DOWN));
@@ -245,12 +338,30 @@ public class VoiceBridge {
         bb.put((byte) (seq & 0xFF));
         bb.putInt((int) (System.currentTimeMillis() & 0x7FFFFFFF));
         bb.put(pcm, 0, len);
-        byte[] pkt = bb.array();
+        return bb.array();
+    }
+
+    private void sendFrame(byte[] pcm, int len, InetSocketAddress to) {
+        byte[] pkt = buildFrame(pcm, len);
         try {
             udp.send(new DatagramPacket(pkt, pkt.length, to.getAddress(), to.getPort()));
             statTx.incrementAndGet();
         } catch (Exception e) {
             Log.w(TAG, "send: " + e.getMessage());
+        }
+    }
+
+    /** @return false=WS 已断,调用方应停止下行循环。 */
+    private boolean sendFrameWs(byte[] pcm, int len) {
+        NanoWSD.WebSocket ws = wsAudio;
+        if (ws == null) return false;
+        try {
+            ws.send(buildFrame(pcm, len));
+            statTx.incrementAndGet();
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "ws send failed: " + e.getMessage());
+            return false;
         }
     }
 

@@ -22,6 +22,8 @@ import com.applecase.gateway.call.CallController;
 import com.applecase.gateway.call.CallMonitor;
 import com.applecase.gateway.net.MqttClient;
 import com.applecase.gateway.net.Protocol;
+import com.applecase.gateway.net.WebMqttClient;
+import com.applecase.gateway.web.WebServer;
 import com.applecase.gateway.sim.SimMonitor;
 import com.applecase.gateway.sms.SmsReceiver;
 import com.applecase.gateway.sms.SmsSentReceiver;
@@ -58,6 +60,8 @@ public class GatewayService extends Service {
     private CallMonitor callMonitor;
     private CallController callController;
     private Config config;
+    private WebServer webServer;
+    private String deviceId;
 
     // 动态注册的 receivers(需在 onDestroy 反注册)
     private BroadcastReceiver smsSentReceiver;
@@ -74,8 +78,18 @@ public class GatewayService extends Service {
         String deviceId = config.deviceId();
         Protocol.setPresharedKey(BuildConfig.PRESHARED_KEY);
 
-        mqtt = new MqttClient(deviceId, config.brokerHost(), config.brokerPort(),
-                config.mqttUser(), config.mqttPass());
+        this.deviceId = deviceId;
+
+        // Web 服务(阶段四):浏览器直接访问 http://<本机IP>:8080,不依赖 broker
+        webServer = new WebServer(this, this::handleWebCommand);
+        webServer.setAudioSink(frame -> voiceBridge.feedUplink(frame));
+        try { webServer.start(); } catch (Exception e) {
+            Log.w(TAG, "web server start failed: " + e.getMessage());
+        }
+
+        // MQTT + 事件扇出:所有事件(短信/来电/SIM/ACK)同步广播给 Web 客户端
+        mqtt = new WebMqttClient(deviceId, config.brokerHost(), config.brokerPort(),
+                config.mqttUser(), config.mqttPass(), webServer::broadcast);
         smsSender = new SmsSender(this, mqtt);
         voiceBridge = new VoiceBridge(this);
         simMonitor = new SimMonitor(this, mqtt);
@@ -147,6 +161,10 @@ public class GatewayService extends Service {
                 case Protocol.T_AUDIO_CTRL:
                     handleAudioCtrl(msg);
                     break;
+                case "GET_STATE":
+                    // Web 客户端上线/刷新拉当前状态(HELLO 经扇出回到 Web)
+                    publishHello(this.deviceId);
+                    break;
                 default:
                     // 本版本不支持的指令,回 UNSUPPORTED
                     ack(msg, false, "UNSUPPORTED", null);
@@ -202,12 +220,27 @@ public class GatewayService extends Service {
                 return;
             }
             JSONObject params = d.optJSONObject("params");
-            String ip = params != null ? params.optString("ip", null) : null;
-            int port = params != null ? params.optInt("port", 0) : 0;
-            String err = voiceBridge.start(dir, ip, port);
+            boolean wsMode = params != null && params.optBoolean("ws", false);
+            String err;
+            String transport;
+            if (wsMode) {
+                // Web 客户端:音频走 WebSocket(浏览器不能发裸 UDP)
+                transport = "ws";
+                fi.iki.elonen.NanoWSD.WebSocket aws = webServer.pollAudioSocket();
+                err = aws != null ? voiceBridge.startWeb(dir, aws) : "audio websocket not connected";
+            } else {
+                transport = "udp";
+                String ip = params != null ? params.optString("ip", null) : null;
+                int port = params != null ? params.optInt("port", 0) : 0;
+                err = voiceBridge.start(dir, ip, port);
+            }
             if (err == null) {
                 JSONObject ok = new JSONObject();
-                try { ok.put("codec", VoiceBridge.CODEC); ok.put("port", VoiceBridge.UDP_PORT); } catch (JSONException ignored) {}
+                try {
+                    ok.put("codec", VoiceBridge.CODEC);
+                    ok.put("transport", transport);
+                    if (!wsMode) ok.put("port", VoiceBridge.UDP_PORT);
+                } catch (JSONException ignored) {}
                 ackData(msg, ok);
             } else {
                 ack(msg, false, "SEND_FAILED", err);
@@ -242,6 +275,11 @@ public class GatewayService extends Service {
         }
         if (err == null) ack(msg, true, null, null);
         else ack(msg, false, err, action);
+    }
+
+    /** Web 控制通道入口(/ws):与 MQTT 指令共用处理逻辑,回执经扇出回到 Web。 */
+    private void handleWebCommand(Protocol.Message msg) {
+        handleCommand(msg);
     }
 
     /** 收到 SmsReceiver 转发的短信,封装成 SMS_IN 发布。 */
@@ -314,6 +352,8 @@ public class GatewayService extends Service {
     /** ack 成功时直接带 data 的变体(如 AUDIO_CTRL 返回实际 codec/端口)。 */
     private void ackData(Protocol.Message req, JSONObject data) {
         try {
+            data.put("ref", req.id);
+            data.put("ok", true);
             Protocol.Message ack = Protocol.envelope(Protocol.T_CMD_ACK, req.id, data);
             mqtt.publishEvent("cmd/ack", ack);
         } catch (Exception e) {
@@ -376,6 +416,7 @@ public class GatewayService extends Service {
             mqtt.publishRetained("status", Protocol.envelope(Protocol.T_BYE, bye));
         } catch (Exception ignored) {}
         if (heartbeatExec != null) heartbeatExec.shutdownNow();
+        if (webServer != null) webServer.stopServer();
         voiceBridge.stop();
         callMonitor.stop();
         simMonitor.stop();

@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>苹果皮网关</title>
+<style>
+:root{--bg:#0f1115;--card:#1a1e26;--line:#2a3040;--tx:#e8ecf4;--sub:#8b94a7;--acc:#4f8cff;--ok:#34c77b;--err:#ff5d5d}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font:15px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding-bottom:120px}
+.wrap{max-width:640px;margin:0 auto;padding:14px}
+header{display:flex;align-items:center;gap:8px;padding:10px 2px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--err);box-shadow:0 0 6px currentColor}
+.dot.on{background:var(--ok)}
+h1{font-size:18px;flex:1}
+.audiobadge{color:var(--ok);font-size:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin:10px 0}
+.t{font-size:13px;color:var(--sub);margin-bottom:8px}
+.sims{display:flex;gap:8px}
+.sim{flex:1;background:#232a37;border-radius:10px;padding:8px 10px}
+.sim b{font-size:14px;display:block}
+.sim span{display:block;font-size:12px;color:var(--sub);margin-top:2px}
+input,textarea,button{font:inherit;color:var(--tx);background:#232a37;border:1px solid var(--line);border-radius:10px;padding:9px 11px;width:100%}
+textarea{resize:vertical;min-height:64px}
+button{cursor:pointer;font-weight:600;-webkit-tap-highlight-color:transparent}
+button.pri{background:var(--acc);border-color:var(--acc)}
+button.grn{background:var(--ok);border-color:var(--ok);color:#06281a}
+button.red{background:transparent;border-color:var(--err);color:var(--err)}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.slotbtns{display:flex;gap:6px;margin:8px 0}
+.slotbtns button{padding:6px 0;font-size:13px}
+.slotbtns button.sel{background:var(--acc);border-color:var(--acc)}
+.msg{border-bottom:1px solid var(--line);padding:8px 2px}
+.msg:last-child{border-bottom:none}
+.msg b{font-size:14px}
+.msg p{font-size:14px;margin-top:2px;word-break:break-all}
+.msg small{color:var(--sub);font-size:12px}
+.hint{font-size:12px;color:var(--sub);margin-top:8px}
+.call{position:fixed;left:0;right:0;bottom:0;background:rgba(20,25,34,.96);border-top:1px solid var(--line);padding:14px 14px calc(14px + env(safe-area-inset-bottom));backdrop-filter:blur(10px);z-index:5}
+.call .num{font-size:22px;font-weight:700;text-align:center;margin:4px 0}
+.call .st{text-align:center;color:var(--sub);font-size:13px;margin-bottom:10px}
+#toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);padding:8px 16px;border-radius:20px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:9;max-width:90%}
+#toast.show{opacity:1}
+.list{max-height:300px;overflow:auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><div class="dot" id="dot"></div><h1>苹果皮网关</h1><span class="audiobadge" id="ab"></span></header>
+
+  <div class="card">
+    <div class="t">双卡状态</div>
+    <div class="sims" id="sims"><div class="sim"><span>连接中…</span></div></div>
+  </div>
+
+  <div class="card">
+    <div class="t">拨号(声音走本页,Q968 已自动静音)</div>
+    <input id="num" placeholder="号码,如 10010" inputmode="tel">
+    <div class="slotbtns" id="cslot"></div>
+    <div class="row">
+      <button class="pri" id="dial">📞 拨出</button>
+      <button id="hang">挂断</button>
+    </div>
+    <div class="hint">通话接通后自动开启语音桥(需允许麦克风);对着手机说话即走 Q968 的卡</div>
+  </div>
+
+  <div class="card">
+    <div class="t">发短信</div>
+    <input id="sto" placeholder="收件号码" inputmode="tel" style="margin-bottom:8px">
+    <textarea id="sbody" placeholder="短信内容"></textarea>
+    <div class="slotbtns" id="sslot"></div>
+    <button class="pri" id="send">✉️ 发送</button>
+  </div>
+
+  <div class="card">
+    <div class="t">短信记录</div>
+    <div class="list" id="msgs"><div class="msg"><small>暂无</small></div></div>
+  </div>
+
+  <div class="card">
+    <div class="t">通话记录</div>
+    <div class="list" id="logs"><div class="msg"><small>暂无</small></div>
+  </div>
+</div>
+
+<div class="call" id="callbox" style="display:none">
+  <div class="num" id="cnum"></div>
+  <div class="st" id="cst"></div>
+  <div class="row">
+    <button class="grn" id="ans">接听</button>
+    <button class="red" id="end">挂断</button>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const WS_BASE=(location.protocol==='https:'?'wss://':'ws://')+location.host;
+let ctrl=null, callSlot=0, smsSlot=0;
+let SIMS=[], active=null, logEls={};
+
+// ---------- 控制通道 ----------
+function connectCtrl(){
+  ctrl=new WebSocket(WS_BASE+'/ws');
+  ctrl.onopen=()=>{$('dot').classList.add('on');sendCmd('GET_STATE',{})};
+  ctrl.onclose=()=>{$('dot').classList.remove('on');setTimeout(connectCtrl,2000)};
+  ctrl.onerror=()=>{try{ctrl.close()}catch(e){}};
+  ctrl.onmessage=e=>{try{handle(JSON.parse(e.data))}catch(err){}};
+}
+function sendCmd(type,data){
+  if(!ctrl||ctrl.readyState!==1)return;
+  ctrl.send(JSON.stringify({v:1,id:uid(),type,ts:Date.now(),token:'web',data}));
+}
+function uid(){return (crypto.randomUUID?crypto.randomUUID():'w'+Date.now()+Math.random())}
+
+function handle(m){
+  const d=m.data||{};
+  switch(m.type){
+    case 'HELLO':
+      SIMS=d.sims||[];
+      $('sims').innerHTML=SIMS.map(s=>
+        `<div class="sim"><b>卡${s.slot} ${s.carrier}</b><span>${s.state} · 信号${s.signal}${s.number?' · '+s.number:''}</span></div>`).join('')
+        ||'<div class="sim"><span>未检测到 SIM</span></div>';
+      renderSlots();break;
+    case 'SIM_STATE':
+      {const s=SIMS.find(x=>x.slot===d.slot);if(s){s.state=d.state;s.signal=d.signal;s.carrier=d.carrier||s.carrier;handle({type:'HELLO',data:{sims:SIMS}})}break}
+    case 'SMS_IN': addMsg(d); break;
+    case 'SMS_OUT': toast('短信 '+(d.status||'')+(d.error?'('+d.error+')':'')); break;
+    case 'CALL_INCOMING':
+      active={callId:d.id,from:d.from||'未知号码',slot:d.slot,state:'ringing',dir:'in'};
+      addLog(active); showCall(); break;
+    case 'CALL_STATE':
+      if(!active||active.callId!==d.ref){
+        active={callId:d.ref,from:(d.from&&d.from!=='?')?d.from:'未知号码',slot:d.slot,state:d.state,dir:d.dir||'in'};
+        addLog(active);
+      }else{
+        active.state=d.state;
+        if(d.from&&d.from!=='?')active.from=d.from;
+      }
+      if(logEls[d.ref])logEls[d.ref].textContent='卡'+(d.slot!=null?d.slot:'')+' · '+stTxt(d.state);
+      showCall();
+      if(active.state==='active'&&!audioOn)startAudio();
+      if(active.state==='ended'||active.state==='missed'){
+        stopAudio();
+        setTimeout(()=>{if(active&&active.state!=='ringing'&&active.state!=='active'){active=null;showCall()}},1600);
+      }
+      break;
+    case 'CMD_ACK':
+      if(d.ok===false)toast('指令失败:'+(d.error||'')+(d.detail?' '+d.detail:''));break;
+  }
+}
+function stTxt(s){return {ringing:'响铃',active:'通话中',ended:'已结束',missed:'未接'}[s]||s}
+
+function renderSlots(){
+  const mk=(el,sel,fn)=>{
+    el.innerHTML='';
+    SIMS.forEach(s=>{
+      const b=document.createElement('button');
+      b.textContent='卡'+s.slot+' '+(s.carrier||'');
+      if(s.slot===sel)b.classList.add('sel');
+      b.onclick=()=>{fn(s.slot);renderSlots()};
+      el.appendChild(b);
+    });
+  };
+  if(!SIMS.length)return;
+  mk($('cslot'),callSlot,v=>callSlot=v);
+  mk($('sslot'),smsSlot,v=>smsSlot=v);
+}
+function addMsg(d){
+  const box=$('msgs'); if(box.firstElementChild&&box.children.length===1&&!box.dataset.had){box.innerHTML='';box.dataset.had=1}
+  const div=document.createElement('div');div.className='msg';
+  const b=document.createElement('b');b.textContent=d.from;
+  const sm=document.createElement('small');sm.textContent='卡'+(d.slot||0)+' · '+new Date(d.ts||Date.now()).toLocaleString();
+  const p=document.createElement('p');p.textContent=d.body;
+  div.append(b,' ',sm,p);box.prepend(div);
+}
+function addLog(c){
+  const box=$('logs'); if(!box.dataset.had){box.innerHTML='';box.dataset.had=1}
+  const div=document.createElement('div');div.className='msg';
+  const b=document.createElement('b');b.textContent=(c.dir==='out'?'↗ ':'↙ ')+c.from;
+  const sm=document.createElement('small');sm.id='l'+c.callId;sm.textContent='卡'+(c.slot!=null?c.slot:'')+' · '+stTxt(c.state);
+  div.append(b,' ',sm);box.prepend(div);logEls[c.callId]=sm;
+}
+function showCall(){
+  const b=$('callbox');
+  if(!active){b.style.display='none';return}
+  if(active.state==='ringing'||active.state==='active'){
+    b.style.display='block';
+    $('cnum').textContent=active.from;
+    $('cst').textContent=(active.state==='ringing'?'来电响铃':'通话中')+' · 卡'+active.slot+(audioOn?' · 语音桥已开启':'');
+    $('ans').style.display=active.state==='ringing'?'':'none';
+  }
+}
+function toast(s){const t=$('toast');t.textContent=s;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2200)}
+
+// ---------- 操作 ----------
+$('dial').onclick=()=>{const n=$('num').value.trim();if(!n)return toast('先填号码');ensureCtx();sendCmd('CALL_PLACE',{to:n,simSlot:callSlot})};
+$('hang').onclick=()=>sendCmd('CALL_CONTROL',{action:'hangup'});
+$('ans').onclick=()=>{ensureCtx();sendCmd('CALL_CONTROL',{action:'answer'})};
+$('end').onclick=()=>sendCmd('CALL_CONTROL',{action:'hangup'});
+$('send').onclick=()=>{
+  const to=$('sto').value.trim(),b=$('sbody').value.trim();
+  if(!to||!b)return toast('填号码和内容');
+  sendCmd('SMS_SEND',{to,body:b,simSlot:smsSlot});$('sbody').value='';
+};
+
+// ---------- 语音桥(WebSocket 版) ----------
+let actx=null,audioWs=null,proc=null,micStream=null,audioOn=false;
+let upBuf=new Int16Array(0),upSeq=0,playNext=0;
+
+function ensureCtx(){
+  if(!actx){
+    const AC=window.AudioContext||window.webkitAudioContext;
+    try{actx=new AC({sampleRate:16000})}catch(e){actx=new AC()}
+  }
+  if(actx.state==='suspended')actx.resume();
+}
+function startAudio(){
+  ensureCtx();
+  audioWs=new WebSocket(WS_BASE+'/audio');
+  audioWs.binaryType='arraybuffer';
+  audioWs.onopen=()=>{
+    sendCmd('AUDIO_CTRL',{action:'start',dir:'both',codec:'pcm16',params:{ws:true}});
+    navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}})
+      .then(st=>{micStream=st;startMic()})
+      .catch(e=>toast('麦克风权限失败:'+e.message));
+    audioOn=true;$('ab').textContent='🎙 语音桥';showCall();
+  };
+  audioWs.onmessage=e=>playFrame(e.data);
+  audioWs.onclose=()=>{audioOn=false;$('ab').textContent='';showCall()};
+}
+function startMic(){
+  const src=actx.createMediaStreamSource(micStream);
+  proc=actx.createScriptProcessor(1024,1,1);
+  src.connect(proc);proc.connect(actx.destination);
+  proc.onaudioprocess=e=>{
+    if(!audioWs||audioWs.readyState!==1)return;
+    const f=e.inputBuffer.getChannelData(0);
+    const ints=new Int16Array(f.length);
+    for(let i=0;i<f.length;i++){const v=Math.max(-1,Math.min(1,f[i]));ints[i]=v<0?v*32768:v*32767}
+    const merged=new Int16Array(upBuf.length+ints.length);
+    merged.set(upBuf);merged.set(ints,upBuf.length);
+    let off=0;const FR=320;
+    while(off+FR<=merged.length){sendFrame(merged.subarray(off,off+FR));off+=FR}
+    upBuf=merged.slice(off);
+  };
+}
+function sendFrame(samples){
+  const buf=new Uint8Array(8+samples.length*2);
+  buf[0]=0x12;
+  const s=upSeq++&0xFFFFFF;
+  buf[1]=(s>>16)&255;buf[2]=(s>>8)&255;buf[3]=s&255;
+  const ts=Date.now()&0x7FFFFFFF;
+  buf[4]=(ts>>>24)&255;buf[5]=(ts>>>16)&255;buf[6]=(ts>>>8)&255;buf[7]=ts&255;
+  new Int16Array(buf.buffer,8).set(samples);
+  audioWs.send(buf);
+}
+function playFrame(ab){
+  if(!actx||ab.byteLength<=8)return;
+  const dv=new DataView(ab);
+  if((dv.getUint8(0)&0x0F)!==1)return;
+  const n=(ab.byteLength-8)/2;
+  const buf=actx.createBuffer(1,n,16000);
+  const ch=buf.getChannelData(0);
+  for(let i=0;i<n;i++)ch[i]=dv.getInt16(8+i*2,true)/32768;
+  if(playNext<actx.currentTime+0.05)playNext=actx.currentTime+0.05;
+  const src=actx.createBufferSource();
+  src.buffer=buf;src.connect(actx.destination);
+  src.start(playNext);playNext+=buf.duration;
+}
+function stopAudio(){
+  try{sendCmd('AUDIO_CTRL',{action:'stop'})}catch(e){}
+  audioOn=false;$('ab').textContent='';
+  if(proc){try{proc.disconnect()}catch(e){};proc=null}
+  if(micStream){micStream.getTracks().forEach(t=>t.stop());micStream=null}
+  if(audioWs){audioWs.onclose=null;try{audioWs.close()}catch(e){};audioWs=null}
+  upBuf=new Int16Array(0);playNext=0;
+}
+
+connectCtrl();
+</script>
+</body>
+</html>
