@@ -1,6 +1,7 @@
-# iPhone 调试客户端(阶段一/二)
+# iPhone 调试客户端(阶段一/二/三)
 
-> 最小验证客户端:连 broker、收发短信(阶段一)+ 来电显示/双卡拨号/通话控制(阶段二)。
+> 最小验证客户端:连 broker、收发短信(阶段一)+ 来电显示/双卡拨号/通话控制(阶段二)
+> + 实时语音桥(阶段三:对着 iPhone 说话走 Q968 的卡,对方声音回 iPhone)。
 > 不是最终产品 UI,只用来验证端到端链路。
 
 ## 创建步骤(Xcode)
@@ -408,3 +409,193 @@ struct ContentView: View {
 - [ ] 在"拨号测试"选卡1 → 拨出 → Q968 从卡1真实拨出 → 记录显示"去电"
 
 全部通过 = 阶段二端到端打通。
+
+---
+
+## 阶段三:语音桥(AudioBridge.swift)
+
+在阶段二工程里新增 `AudioBridge.swift`,并在通话接通时启动、挂断时停止。
+实现:iOS 麦克风(voiceChat 模式,自带 AEC)→ 16k/mono/PCM16 → 20ms 帧 + 8 字节头
+(见 PROTOCOL.md 第 5 节)→ UDP 发到 Q968:51820;同时收 Q968 发来的下行帧 → 播放。
+
+### AudioBridge.swift
+
+```swift
+import Foundation
+import AVFoundation
+import Network
+
+/// 实时语音桥:iPhone 麦克风 ⇄ UDP ⇄ Q968 网关(root 中继 → 通话上下行)。
+/// 协议:pcm16/16kHz/mono/20ms 帧,8 字节头 [ver|dir][seq24][ts32]。
+final class AudioBridge: NSObject {
+    static let frameBytes = 640          // 20ms @16k*16bit
+    static let frameDuration = 0.020
+
+    private var engine: AVAudioEngine?
+    private var player: AVAudioPlayerNode?
+    private var conn: NWConnection?
+    private let queue = DispatchQueue(label: "audio-bridge")
+
+    private var outQueue: [Data] = []    // 下行待播放缓冲(简单抖动缓冲,上限 10 帧)
+    private var downSeqDelta: Int64 = 0
+
+    /// 通话接通后调用。gatewayHost = Q968 的 ZeroTier IP。
+    func start(gatewayHost: String) throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .voiceChat,   // voiceChat 自带回声消除
+                                options: [.defaultToSpeaker, .allowBluetooth])
+        try session.setActive(true)
+
+        let engine = AVAudioEngine()
+        self.engine = engine
+
+        // ---- 上行:麦克风(硬件采样率)→ 转 16k/mono/Float32 供编码 ----
+        let inFmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000,
+                                  channels: 1, interleaved: false)!
+        let srcFmt = engine.inputNode.outputFormat(forBus: 0)
+        let converter = AVAudioConverter(from: srcFmt, to: inFmt)!
+
+        let capCapacity = 8192
+        let capBuf = AVAudioPCMBuffer(pcmFormat: inFmt, frameCapacity: AVAudioFrameCount(capCapacity))!
+        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: srcFmt) { buf, _ in
+            var err: NSError?
+            let got = converter.convert(to: capBuf, error: &err) { _, outStatus in
+                outStatus.pointee = .haveData
+                return buf
+            }
+            guard got > 0 else { return }
+            self.sendUplink(pcm: capBuf, frames: got)
+        }
+
+        // ---- 下行:播放节点(16k mono)→ 引擎自动转硬件采样率 ----
+        let player = AVAudioPlayerNode()
+        self.player = player
+        let playFmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000,
+                                    channels: 1, interleaved: false)!
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: playFmt)
+        try engine.start()
+        player.play()
+
+        // ---- UDP:收下行帧 ----
+        let params = NWParameters.udp
+        let listener = try NWListener(using: params, on: 51821)
+        listener.newConnectionHandler = { [weak self] c in
+            c.start(queue: self?.queue ?? .global())
+            self?.receiveLoop(c)
+        }
+        listener.start(queue: queue)
+
+        // ---- UDP:发上行帧 ----
+        let conn = NWConnection(host: NWEndpoint.Host(gatewayHost), port: 51820,
+                                using: .udp)
+        conn.start(queue: queue)
+        self.conn = conn
+    }
+
+    /// 通话结束/挂断时调用。
+    func stop() {
+        engine?.inputNode.removeTap(onBus: 0)
+        player?.stop()
+        engine?.stop()
+        engine = nil
+        conn?.cancel()
+        conn = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    // ---- 上行:PCM Float32(16k) → Int16 帧 + 头 → UDP ----
+    private func sendUplink(pcm: AVAudioPCMBuffer, frames: AVAudioFrameCount) {
+        guard let ch = pcm.floatChannelData?[0] else { return }
+        var samples = [Int16](repeating: 0, count: Int(frames))
+        for i in 0..<Int(frames) {
+            let v = max(-1.0, min(1.0, ch[i]))
+            samples[i] = Int16(v * 32767)
+        }
+        var offset = 0
+        while offset < samples.count {
+            let n = min(Self.frameBytes / 2, samples.count - offset)
+            var packet = Data(capacity: 8 + n * 2)
+            packet.append(0x12)                       // ver=1 | dir=2(上行)
+            packet.append(contentsOf: [0, 0, 0])      // seq(客户端暂不填序号)
+            var ts = UInt32(Date().timeIntervalSince1970 * 1000).bigEndian
+            packet.append(Data(bytes: &ts, count: 4))
+            let chunk = samples[offset..<(offset + n)]
+            chunk.withUnsafeBytes { raw in
+                packet.append(contentsOf: unsafeBitCast(raw.baseAddress!, to: UnsafePointer<UInt8>.self)
+                    .prefix(n * 2))
+            }
+            conn?.send(content: packet, completion: .contentProcessed { _ in })
+            offset += n
+        }
+    }
+
+    // ---- 下行:UDP → 解头 → 入播放缓冲 ----
+    private var activeConn: NWConnection?
+    private func receiveLoop(_ c: NWConnection) {
+        activeConn = c
+        receiveMore()
+    }
+    private func receiveMore() {
+        activeConn?.receiveMessage { [weak self] data, _, _, error in
+            guard let self = self else { return }
+            if let data = data, data.count > 8 {
+                let dir = data[data.startIndex] & 0x0F
+                if dir == 1 {   // 下行帧
+                    let pcm = data.dropFirst(8)
+                    self.playDownlink(pcm: Array(pcm))
+                }
+            }
+            if error == nil { self.receiveMore() }
+        }
+    }
+
+    private func playDownlink(pcm: [UInt8]) {
+        guard let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000,
+                                      channels: 1, interleaved: false),
+              let buf = AVAudioPCMBuffer(pcmFormat: fmt,
+                                         frameCapacity: AVAudioFrameCount(pcm.count / 2)) else { return }
+        buf.frameLength = AVAudioFrameCount(pcm.count / 2)
+        let out = buf.floatChannelData![0]
+        pcm.withUnsafeBytes { raw in
+            let s16 = raw.bindMemory(to: Int16.self)
+            for i in 0..<s16.count { out[i] = Float(s16[i]) / 32768.0 }
+        }
+        player?.scheduleBuffer(buf, at: nil, completionCallbackType: .dataPlayedBack) { _ in }
+        player?.play()
+    }
+}
+```
+
+### 接线(在 ContentView.swift 的 GatewayClient 里)
+
+```swift
+// 新增
+let bridge = AudioBridge()
+
+// CALL_STATE 处理里,根据状态自动开/关音频桥:
+case "CALL_STATE":
+    ...
+    if state == "active" {
+        // 延迟 1s 等音频通路稳定,再启动桥并告知网关
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            try? self.bridge.start(gatewayHost: self.gatewayHost)   // Q968 的 ZeroTier IP
+            self.publishCommand("AUDIO_CTRL", data: [
+                "action": "start", "dir": "both", "codec": "pcm16",
+                "params": ["ip": self.myZeroTierIP, "port": 51821]])
+        }
+    } else if state == "ended" || state == "missed" {
+        self.publishCommand("AUDIO_CTRL", data: ["action": "stop"])
+        self.bridge.stop()
+    }
+```
+
+### 阶段三验证清单
+
+- [ ] Q968 端按 README 部署(root 授权已由 deploy 脚本自动配置)
+- [ ] iPhone 与 Q968 同 ZeroTier 网,iPhone 客户端拨号(CALL_PLACE)
+- [ ] 接通后:Q968 侧按免提;对着 iPhone 说话 → Q968 应静音(声音走桥)→ 对方能听到
+- [ ] 对方说话 → iPhone 扬声器出声
+- [ ] 挂断后桥自动停(通知栏无残留),Q968 logcat 显示 `bridge stopped`
+- [ ] 主观感受延迟(目标 <300ms)、回声情况(voiceChat AEC 效果)
+
